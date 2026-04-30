@@ -149,6 +149,7 @@ public:
 	int thd_engine_stop();
 	int check_cpu_id();
 
+	virtual void update_power_policies() {}
 	bool set_preference(const int pref);
 	void thd_engine_terminate();
 	void thd_engine_calibrate();

@@ -1,0 +1,51 @@
+# Kernel module build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+*.rej
+modules.order
+Module.symvers
+.*.cmd
+.tmp_versions/
+
+# Kernel sources downloaded at build time
+modules/goodix_ts/goodix.c
+modules/goodix_ts/goodix.h
+modules/goodix_ts/goodix_fwupload.c
+modules/goodix_ts/.patched.stamp
+
+# vbt-patcher build outputs and downloaded headers
+vbt-patcher/vbt_patch
+vbt-patcher/vbt_refresh_rate
+vbt-patcher/intel_vbt_defs.h
+vbt-patcher/intel_dsi_vbt_defs.h
+
+# vbt-patcher data files (device-specific dumps, not source)
+vbt-patcher/i915_vbt*
+vbt-patcher/i915_display_info
+vbt-patcher/vbt
+
+# iio-sensor-proxy meson build
+iio-sensor-proxy/_build/
+
+# thermal_daemon autotools / generated
+thermal_daemon/autom4te.cache/
+thermal_daemon/config.h.in~
+thermal_daemon/thermald-resource.c
+thermal_daemon/m4
+
+# clangd build info (generated via `make compile_commands.json`)
+compile_commands.json
+.cache/
+
+# Logs
+*.log
+
+# Editor / OS
+*~
+*.swp
+.DS_Store
+
+x/

@@ -148,6 +148,7 @@ void cthd_engine::thd_engine_thread() {
 		if ((tm - thz_last_update_event_time) >= thd_poll_interval) {
 			thd_engine_lock();
 			update_engine_state();
+			update_power_policies();
 			thd_engine_unlock();
 			thz_last_update_event_time = tm;
 		}

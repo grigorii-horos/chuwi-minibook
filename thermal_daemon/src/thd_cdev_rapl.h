@@ -111,6 +111,11 @@ public:
 	int get_phy_max_state() override {
 		return phy_max;
 	}
+	/* Skip PID reset: the two-trip pattern triggers control_begin()
+	 * every cycle, preventing the integral from accumulating. */
+	int control_begin() override {
+		return 0;
+	}
 	int rapl_update_enable_status(int enable);
 };
 

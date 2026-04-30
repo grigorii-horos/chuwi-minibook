@@ -98,6 +98,11 @@ int cthd_engine_adaptive::install_passive(struct psv *psv) {
 	}
 
 	int temp = DECI_KELVIN_TO_CELSIUS(psv->temp) * 1000;
+	/* Cap SEN3 trip to MINIBOOK_SEN3_TRIP_TEMP (GDDV default is too high). */
+	if (psv_zone.find("SEN3") != std::string::npos && temp > MINIBOOK_SEN3_TRIP_TEMP) {
+		thd_log_info("minibook: overriding SEN3 trip from %d to %d\n", temp, MINIBOOK_SEN3_TRIP_TEMP);
+		temp = MINIBOOK_SEN3_TRIP_TEMP;
+	}
 	int target_state = 0;
 
 	if (psv->limit.length()) {
@@ -429,6 +434,7 @@ void cthd_engine_adaptive::set_int3400_target(struct adaptive_target &target) {
 	}
 
 	psvt_consolidate();
+	install_minibook_ec_zones();
 
 	thd_log_info("\n\n ZONE DUMP BEGIN\n");
 	int new_zone_count = 0;
@@ -477,6 +483,7 @@ void cthd_engine_adaptive::install_passive_default() {
 	}
 
 	psvt_consolidate();
+	install_minibook_ec_zones();
 	thd_log_info("\n\n ZONE DUMP BEGIN\n");
 	for (unsigned int i = 0; i < zones.size(); ++i) {
 		zones[i]->zone_dump();
@@ -538,6 +545,58 @@ void cthd_engine_adaptive::exec_fallback_target(int target) {
 		if (gddv.targets[i].target_id != (uint64_t) target)
 			continue;
 		execute_target(gddv.targets[i]);
+	}
+}
+
+void cthd_engine_adaptive::update_power_policies() {
+	static bool dumped = false;
+	const std::vector<struct pbat_entry> &pbats = gddv.get_pbats();
+	const std::vector<struct pbct_entry> &pbcts = gddv.get_pbcts();
+
+	if (!dumped && (pbats.size() || pbcts.size())) {
+		dumped = true;
+		for (unsigned int i = 0; i < pbats.size(); i++)
+			thd_log_info("minibook: PBAT[%u]: tid=%" PRIu64 " name=%s part=%s code=%s arg=%s\n",
+					i, pbats[i].target_id, pbats[i].name.c_str(),
+					pbats[i].participant.c_str(), pbats[i].code.c_str(),
+					pbats[i].argument.c_str());
+		for (unsigned int i = 0; i < pbcts.size(); i++) {
+			thd_log_info("minibook: PBCT[%u]: target=%" PRIu64 " conditions=%zu\n",
+					i, pbcts[i].target, pbcts[i].conditions.size());
+			for (unsigned int c = 0; c < pbcts[i].conditions.size(); c++)
+				thd_log_info("minibook:   cond[%u]: type=%d cmp=%d arg=%" PRIu64 " op=%d\n",
+						c, (int)pbcts[i].conditions[c].condition,
+						(int)pbcts[i].conditions[c].comparison,
+						(uint64_t)pbcts[i].conditions[c].argument,
+						(int)pbcts[i].conditions[c].operation);
+		}
+	}
+
+	uint64_t target_id = 0;
+	if (gddv.evaluate_pbct_conditions(target_id) == THD_SUCCESS) {
+		thd_log_debug("minibook: PBCT matched target_id %" PRIu64 "\n", target_id);
+		for (unsigned int j = 0; j < pbats.size(); j++) {
+			if (pbats[j].target_id == target_id) {
+				cthd_cdev *cdev = NULL;
+				if (pbats[j].participant.find("TCPU") != std::string::npos)
+					cdev = search_cdev("rapl_controller_mmio");
+				else
+					cdev = search_cdev(pbats[j].participant);
+				if (cdev) {
+					struct adaptive_target adapt_target;
+					adapt_target.code = pbats[j].code;
+					adapt_target.argument = pbats[j].argument;
+				thd_log_debug("minibook: PBAT applying %s=%s to %s\n",
+						pbats[j].code.c_str(),
+						pbats[j].argument.c_str(),
+						pbats[j].participant.c_str());
+					cdev->set_adaptive_target(adapt_target);
+				} else {
+				thd_log_debug("minibook: PBAT no cdev for %s\n",
+						pbats[j].participant.c_str());
+				}
+			}
+		}
 	}
 }
 
@@ -619,6 +678,26 @@ int cthd_engine_adaptive::set_int3400_base_path()
 	return THD_ERROR;
 }
 
+static const char *dptf_required_devices[] = {
+	"INTC1049:00",
+	"INTC1060:00",
+	"INTC1061:00",
+};
+
+#define N_DPTF_DEVICES (sizeof(dptf_required_devices) / sizeof(dptf_required_devices[0]))
+
+void cthd_engine_adaptive::verify_dptf_participants() {
+	for (size_t i = 0; i < N_DPTF_DEVICES; i++) {
+		csys_fs dev("/sys/bus/acpi/devices/" + std::string(dptf_required_devices[i]) + "/");
+		int status = 0;
+		if (dev.read("status", &status) < 0 || status == 0) {
+			thd_log_error("minibook: DPTF device %s not active -- dptf_enabler may not have run\n",
+					dptf_required_devices[i]);
+			exit(EXIT_FAILURE);
+		}
+	}
+}
+
 int cthd_engine_adaptive::thd_engine_init(bool ignore_cpuid_check,
 		bool adaptive) {
 	csys_fs sysfs("");
@@ -644,6 +723,8 @@ int cthd_engine_adaptive::thd_engine_init(bool ignore_cpuid_check,
 
 	if (set_int3400_base_path() != THD_SUCCESS)
 		return THD_ERROR;
+
+	verify_dptf_participants();
 
 	if (sysfs.read(int3400_base_path + "firmware_node/path", int3400_path)
 			< 0) {
@@ -790,7 +871,127 @@ int cthd_engine_adaptive::thd_engine_init(bool ignore_cpuid_check,
 	return THD_SUCCESS;
 }
 
+void cthd_engine_adaptive::install_minibook_ec_zones() {
+	struct minibook_zone {
+		const char *name;
+		int trip_temp;
+	};
+	static const struct minibook_zone ec_zones[] = {
+		{ MINIBOOK_SOC_ZONE,     MINIBOOK_SOC_TRIP_TEMP },
+		{ MINIBOOK_CHARGER_ZONE, MINIBOOK_CHARGER_TRIP_TEMP },
+	};
+
+	cthd_cdev *cdev = search_cdev("rapl_controller_mmio");
+	if (!cdev) {
+		cdev = search_cdev("rapl_controller");
+	}
+	if (!cdev) {
+		thd_log_info("minibook: no RAPL cdev for EC zones\n");
+		return;
+	}
+
+	for (const auto &mz : ec_zones) {
+		cthd_zone *zone = search_zone(mz.name);
+		if (!zone) {
+			thd_log_info("minibook: zone %s not found (minibook_ec not loaded?)\n",
+					mz.name);
+			continue;
+		}
+
+		cthd_sensor *sensor = search_sensor(mz.name);
+		if (!sensor) {
+			thd_log_info("minibook: sensor %s not found\n", mz.name);
+			continue;
+		}
+
+		thd_log_info("minibook: adding %s passive trip at %d mC\n",
+				mz.name, mz.trip_temp);
+
+		cthd_trip_point trip_lo(zone->get_trip_count(), PASSIVE,
+				mz.trip_temp, 0, zone->get_zone_index(),
+				sensor->get_index(), SEQUENTIAL);
+		trip_lo.thd_trip_point_add_cdev(*cdev,
+				cthd_trip_point::default_influence,
+				DEFAULT_SAMPLE_TIME_SEC, 0, 0, nullptr, 0, 0, 0);
+		zone->add_trip(trip_lo, 1);
+
+		cthd_trip_point trip_hi(zone->get_trip_count(), PASSIVE,
+				mz.trip_temp + 1000, 0, zone->get_zone_index(),
+				sensor->get_index(), SEQUENTIAL);
+		trip_hi.thd_trip_point_add_cdev(*cdev,
+				cthd_trip_point::default_influence,
+				DEFAULT_SAMPLE_TIME_SEC, 0, 0, nullptr, 0, 0, 0);
+		zone->add_trip(trip_hi, 1);
+
+		zone->zone_cdev_set_binded();
+		zone->set_zone_active();
+	}
+}
+
+void cthd_engine_adaptive::verify_rapl_control() {
+	csys_fs sysfs("");
+
+	if (!sysfs.exists(MINIBOOK_RAPL_PL1_SYSFS)) {
+		thd_log_warn("minibook: RAPL PL1 sysfs not found (%s)\n",
+				MINIBOOK_RAPL_PL1_SYSFS);
+		thd_log_warn("minibook: load intel_rapl_common module\n");
+		return;
+	}
+
+	int current_pl1 = 0;
+	if (sysfs.read(MINIBOOK_RAPL_PL1_SYSFS, &current_pl1) <= 0) {
+		thd_log_warn("minibook: failed to read RAPL PL1\n");
+		return;
+	}
+
+	if (sysfs.write(MINIBOOK_RAPL_PL1_SYSFS, (unsigned int)current_pl1) <= 0) {
+		thd_log_error("minibook: RAPL PL1 write failed -- CFG Lock is likely enabled\n");
+		thd_log_error("minibook: run 'sudo bios-tweaks.sh unlock-cfg && reboot'\n");
+		return;
+	}
+
+	int readback = 0;
+	sysfs.read(MINIBOOK_RAPL_PL1_SYSFS, &readback);
+	if (readback != current_pl1) {
+		thd_log_warn("minibook: RAPL PL1 readback mismatch (%d != %d)\n",
+				readback, current_pl1);
+		return;
+	}
+
+	thd_log_info("minibook: RAPL PL1 writable, current %d uW (%d mW)\n",
+			current_pl1, current_pl1 / 1000);
+}
+
+void cthd_engine_adaptive::log_tcc_offset() {
+	csys_fs sysfs("");
+
+	if (!sysfs.exists(MINIBOOK_TCC_SYSFS)) {
+		thd_log_info("minibook: TCC offset sysfs not available\n");
+		return;
+	}
+
+	int tcc_offset = 0;
+	if (sysfs.read(MINIBOOK_TCC_SYSFS, &tcc_offset) <= 0) {
+		thd_log_warn("minibook: failed to read TCC offset\n");
+		return;
+	}
+
+	int throttle_at = MINIBOOK_TJMAX - tcc_offset;
+
+	thd_log_info("minibook: TCC offset = %d C, TjMax = %d C, throttle at %d C\n",
+			tcc_offset, MINIBOOK_TJMAX, throttle_at);
+
+	if (tcc_offset >= MINIBOOK_STOCK_TCC_OFFSET) {
+		thd_log_warn("minibook: TCC offset is stock (%d C) -- CPU throttles at %d C\n",
+				tcc_offset, throttle_at);
+		thd_log_warn("minibook: run 'sudo bios-tweaks.sh set-tcc 10 && reboot' for more headroom\n");
+	}
+}
+
 int cthd_engine_adaptive::thd_engine_start() {
+	verify_rapl_control();
+	log_tcc_offset();
+
 	if (passive_def_only) {
 		// This means there are no conditions present
 		// This doesn't mean that there are conditions present but none matched.

@@ -23,6 +23,7 @@
  */
 #include "thd_cdev_rapl.h"
 #include "thd_engine.h"
+#include "thd_minibook_config.h"
 
 /* This uses Intel RAPL driver to cool the system. RAPL driver show
  * mas thermal spec power in max_state. Each state can compensate
@@ -472,7 +473,8 @@ int cthd_sysfs_cdev_rapl::update() {
 
 	thd_log_debug("RAPL max limit %d increment: %d\n", max_state, inc_dec_val);
 
-	set_pid_param(-1000, 100, 10);
+	enable_pid();
+	set_pid_param(MINIBOOK_PID_KP, MINIBOOK_PID_KI, MINIBOOK_PID_KD);
 	curr_state = min_state;
 
 	return THD_SUCCESS;

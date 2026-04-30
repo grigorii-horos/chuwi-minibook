@@ -102,6 +102,7 @@ enum adaptive_condition : uint32_t { // NOLINT(performance-enum-size)
 
 enum adaptive_comparison : uint8_t {
 	ADAPTIVE_EQUAL = 0x01, ADAPTIVE_LESSER_OR_EQUAL, ADAPTIVE_GREATER_OR_EQUAL, ADAPTIVE_NOT_EQUAL,
+	ADAPTIVE_GREATER_THAN, ADAPTIVE_GREATER_OR_EQUAL_2,
 };
 
 enum adaptive_operation : uint8_t {
@@ -169,6 +170,20 @@ struct trt_entry {
 	int resd3;
 };
 
+struct pbat_entry {
+	uint64_t target_id;
+	std::string name;
+	std::string participant;
+	uint64_t domain;
+	std::string code;
+	std::string argument;
+};
+
+struct pbct_entry {
+	uint64_t target;
+	std::vector<struct condition> conditions;
+};
+
 struct itmt {
 	int version;
 	std::string name;
@@ -205,6 +220,8 @@ private:
 	std::vector<struct psvt> psvts;
 	std::vector<struct itmt> itmts;
 	std::vector<std::string> idsps;
+	std::vector<struct pbat_entry> pbats;
+	std::vector<struct pbct_entry> pbcts;
 	std::vector<struct trippoint> trippoints;
 	std::string int3400_path;
 #ifndef ANDROID
@@ -230,6 +247,8 @@ private:
 	int parse_appc(char *appc, int len);
 	int parse_apat(char *apat, int len);
 	int parse_apct(char *apct, int len);
+	int parse_pbat(char *pbat, int len);
+	int parse_pbct(char *pbct, int len);
 	int parse_ppcc(char *name, char *ppcc, int len);
 	int parse_psvt(char *name, char *psvt, int len);
 	int parse_itmt(char *name, char *itmt, int len);
@@ -304,6 +323,9 @@ public:
 	struct psvt* find_def_psvt();
 	int search_idsp(const std::string& name);
 
+	const std::vector<struct pbat_entry>& get_pbats() const { return pbats; }
+	const std::vector<struct pbct_entry>& get_pbcts() const { return pbcts; }
+	int evaluate_pbct_conditions(uint64_t &target_id);
 };
 
 #endif /* THD_GDDV_H_ */

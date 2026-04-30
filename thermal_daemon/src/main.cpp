@@ -352,18 +352,14 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-	if (adaptive) {
-		ret = thd_engine_create_adaptive_engine((bool) ignore_cpuid_check, (bool) test_mode);
-		if (ret != THD_SUCCESS) {
-			thd_log_info("--adaptive option failed on this platform\n");
-			thd_log_info("Ignoring --adaptive option\n");
-			ret = thd_engine_create_default_engine((bool) ignore_cpuid_check,
-						       (bool) exclusive_control, conf_file);
-		}
-	} else {
-		ret = thd_engine_create_default_engine((bool) ignore_cpuid_check,
-					       (bool) exclusive_control, conf_file);
+	if (!adaptive) {
+		fprintf(stderr, "This build requires --adaptive mode\n");
+		clean_up_lockfile();
+		closelog();
+		exit(EXIT_FAILURE);
 	}
+
+	ret = thd_engine_create_adaptive_engine((bool) ignore_cpuid_check, (bool) test_mode);
 	if (ret != THD_SUCCESS) {
 		clean_up_lockfile();
 		closelog();

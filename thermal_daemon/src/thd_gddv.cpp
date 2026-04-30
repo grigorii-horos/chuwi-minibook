@@ -192,6 +192,150 @@ int cthd_gddv::parse_appc(char *appc, int len) {
 	return 0;
 }
 
+int cthd_gddv::parse_pbat(char *pbat, int len) {
+	int offset = 0;
+	uint64_t version = get_uint64(pbat, &offset);
+
+	if (version != 1 && version != 2) {
+		thd_log_warn("Found unsupported PBAT version %d\n", (int) version);
+		throw gddv_exception;
+	}
+
+	while (offset < len) {
+		struct pbat_entry entry;
+
+		entry.target_id = get_uint64(pbat, &offset);
+		entry.name = get_string(pbat, &offset);
+		entry.participant = get_string(pbat, &offset);
+		entry.domain = get_uint64(pbat, &offset);
+		entry.code = get_string(pbat, &offset);
+		entry.argument = get_string(pbat, &offset);
+		pbats.push_back(std::move(entry));
+	}
+	return 0;
+}
+
+int cthd_gddv::parse_pbct(char *pbct, int len) {
+	int i;
+	int offset = 0;
+	uint64_t version = get_uint64(pbct, &offset);
+
+	if (version == 1) {
+		while (offset < len) {
+			struct pbct_entry entry;
+			std::vector<struct condition> condition_set;
+
+			entry.target = get_uint64(pbct, &offset);
+			if (entry.target == UINT64_MAX) {
+				thd_log_warn("Invalid PBCT target\n");
+				throw gddv_exception;
+			}
+
+			for (i = 0; i < 10; i++) {
+				struct condition condition;
+
+				condition.condition = adaptive_condition(0);
+				condition.device = "";
+				condition.comparison = adaptive_comparison(0);
+				condition.argument = 0;
+				condition.operation = adaptive_operation(0);
+				condition.time_comparison = adaptive_comparison(0);
+				condition.time = 0;
+				condition.target = entry.target;
+				condition.state = 0;
+				condition.state_entry_time = 0;
+				condition.ignore_condition = 0;
+
+				if (offset >= len) {
+					thd_log_warn("Read off end of buffer in PBCT parsing\n");
+					throw gddv_exception;
+				}
+
+				condition.condition = adaptive_condition(
+						get_uint64(pbct, &offset));
+				condition.comparison = adaptive_comparison(
+						get_uint64(pbct, &offset));
+				condition.argument = get_uint64(pbct, &offset);
+				if (i < 9) {
+					condition.operation = adaptive_operation(
+							get_uint64(pbct, &offset));
+					if (condition.operation == FOR) {
+						offset += 12;
+						condition.time_comparison = adaptive_comparison(
+								get_uint64(pbct, &offset));
+						condition.time = get_uint64(pbct, &offset);
+						offset += 12;
+						i++;
+					}
+				}
+				condition_set.push_back(std::move(condition));
+			}
+			entry.conditions = std::move(condition_set);
+			pbcts.push_back(std::move(entry));
+		}
+	} else if (version == 2) {
+		while (offset < len) {
+			struct pbct_entry entry;
+			std::vector<struct condition> condition_set;
+
+			entry.target = get_uint64(pbct, &offset);
+			if (entry.target == UINT64_MAX) {
+				thd_log_warn("Invalid PBCT target\n");
+				throw gddv_exception;
+			}
+
+			uint64_t count = get_uint64(pbct, &offset);
+			for (i = 0; i < int(count); i++) {
+				struct condition condition = {};
+
+				condition.condition = adaptive_condition(0);
+				condition.device = "";
+				condition.comparison = adaptive_comparison(0);
+				condition.argument = 0;
+				condition.operation = adaptive_operation(0);
+				condition.time_comparison = adaptive_comparison(0);
+				condition.time = 0;
+				condition.target = entry.target;
+				condition.state = 0;
+				condition.state_entry_time = 0;
+				condition.ignore_condition = 0;
+
+				if (offset >= len) {
+					thd_log_warn("Read off end of buffer in parsing PBCT\n");
+					throw gddv_exception;
+				}
+
+				condition.condition = adaptive_condition(
+						get_uint64(pbct, &offset));
+				condition.device = get_string(pbct, &offset);
+				get_uint64(pbct, &offset); /* reserved */
+				condition.comparison = adaptive_comparison(
+						get_uint64(pbct, &offset));
+				condition.argument = get_uint64(pbct, &offset);
+				if (i < int(count - 1)) {
+					condition.operation = adaptive_operation(
+							get_uint64(pbct, &offset));
+					if (condition.operation == FOR) {
+						get_uint64(pbct, &offset);
+						condition.time_comparison = adaptive_comparison(
+								get_uint64(pbct, &offset));
+						condition.time = get_uint64(pbct, &offset);
+						get_uint64(pbct, &offset);
+						i++;
+					}
+				}
+				condition_set.push_back(std::move(condition));
+			}
+			entry.conditions = std::move(condition_set);
+			pbcts.push_back(std::move(entry));
+		}
+	} else {
+		thd_log_warn("Unsupported PBCT version %d\n", (int) version);
+		throw gddv_exception;
+	}
+	return 0;
+}
+
 int cthd_gddv::parse_apat(char *apat, int len) {
 	int offset = 0;
 	uint64_t version = get_uint64(apat, &offset);
@@ -415,7 +559,9 @@ static const char * const comp_strs[] = {
 		"ADAPTIVE_EQUAL",
 		"ADAPTIVE_LESSER_OR_EQUAL",
 		"ADAPTIVE_GREATER_OR_EQUAL",
-		"ADAPTIVE_NOT_EQUAL"
+		"ADAPTIVE_NOT_EQUAL",
+		"ADAPTIVE_GREATER_THAN",
+		"ADAPTIVE_GREATER_OR_EQUAL_2"
 };
 
 #define ARRAY_SIZE(array) \
@@ -1059,6 +1205,14 @@ int cthd_gddv::parse_gddv_key(char *buf, int size, int *end_offset) {
 		parse_apct(val.get(), vallength);
 	}
 
+	if (type && thd_strcmp_n(type, "pbat") == 0) {
+		parse_pbat(val.get(), vallength);
+	}
+
+	if (type && thd_strcmp_n(type, "pbct") == 0) {
+		parse_pbct(val.get(), vallength);
+	}
+
 	if (type && thd_strcmp_n(type, "apat") == 0) {
 		parse_apat(val.get(), vallength);
 	}
@@ -1294,6 +1448,18 @@ int cthd_gddv::compare_condition(const struct condition& condition,
 		else
 		    return THD_ERROR;
         break;
+	case ADAPTIVE_GREATER_THAN:
+		if (value > condition.argument)
+			return THD_SUCCESS;
+		else
+			return THD_ERROR;
+		break;
+	case ADAPTIVE_GREATER_OR_EQUAL_2:
+		if (value >= condition.argument)
+			return THD_SUCCESS;
+		else
+			return THD_ERROR;
+		break;
 	default:
 		return THD_ERROR;
 	}
@@ -1529,6 +1695,33 @@ int cthd_gddv::evaluate_condition(struct condition& condition) {
 		ret = evaluate_ac_condition(condition);
 	}
 
+	if (condition.condition == Aggregate_power_percentage && upower_client) {
+		/* Battery% <= 0 is always true (GDDV workaround). */
+		if (condition.comparison == ADAPTIVE_LESSER_OR_EQUAL &&
+				condition.argument == 0) {
+			ret = THD_SUCCESS;
+		} else {
+			double pct = up_client_get_on_battery(upower_client) ? 50 : 100;
+			GPtrArray *devices = up_client_get_devices2(upower_client);
+			if (devices) {
+				for (unsigned int d = 0; d < devices->len; d++) {
+					UpDevice *dev = (UpDevice *)g_ptr_array_index(devices, d);
+					guint kind = 0;
+					g_object_get(dev, "kind", &kind, NULL);
+					if (kind == 2) { /* UP_DEVICE_KIND_BATTERY */
+						g_object_get(dev, "percentage", &pct, NULL);
+						break;
+					}
+				}
+				g_ptr_array_unref(devices);
+			}
+			thd_log_debug("Battery%%: %.0f%% arg=%" PRIu64 " cmp=%d\n",
+					pct, (uint64_t)condition.argument,
+					(int)condition.comparison);
+			ret = compare_condition(condition, (int)pct);
+		}
+	}
+
 	if (condition.condition == Workload) {
 		ret = evaluate_workload_condition(condition);
 	}
@@ -1581,6 +1774,16 @@ int cthd_gddv::evaluate_condition_set(std::vector<struct condition>& condition_s
 			return THD_ERROR;
 	}
 	return THD_SUCCESS;
+}
+
+int cthd_gddv::evaluate_pbct_conditions(uint64_t &target_id) {
+	for (unsigned int i = 0; i < pbcts.size(); i++) {
+		if (evaluate_condition_set(pbcts[i].conditions) == THD_SUCCESS) {
+			target_id = pbcts[i].target;
+			return THD_SUCCESS;
+		}
+	}
+	return THD_ERROR;
 }
 
 int cthd_gddv::evaluate_conditions() {
@@ -1992,6 +2195,18 @@ skip_load:
 			power_profiles_changed_cb(this);
 		} else {
 			thd_log_info("Could not setup DBus watch for power-profiles-daemon");
+		}
+	}
+
+	/* Activate Passive 1 UUID if not already set. */
+	if (int3400_base_path.size()) {
+		std::string cur_uuid;
+		if (sysfs.read(int3400_base_path + "uuids/current_uuid",
+				cur_uuid) >= 0 &&
+			cur_uuid.find("INVALID") != std::string::npos) {
+			sysfs.write(int3400_base_path + "uuids/current_uuid",
+					"42A441D6-AE6A-462b-A84B-4A8CE79027D3");
+			thd_log_info("minibook: activated Passive 1 UUID\n");
 		}
 	}
 #endif
