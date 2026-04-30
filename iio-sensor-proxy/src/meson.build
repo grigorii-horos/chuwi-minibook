@@ -25,6 +25,7 @@ sources = [
   'iio-sensor-proxy.c',
   'drivers.c',
   'orientation.c',
+  'drv-mxc6655-accel.c',
   'drv-iio-buffer-accel.c',
   'drv-iio-poll-accel.c',
   'drv-input-accel.c',

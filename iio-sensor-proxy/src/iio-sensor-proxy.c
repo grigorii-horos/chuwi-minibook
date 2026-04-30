@@ -68,6 +68,7 @@ typedef struct {
 } SensorData;
 
 static const SensorDriver * const drivers[] = {
+	&mxc6655_accel,
 	&iio_buffer_accel,
 	&iio_poll_accel,
 	&input_accel,
@@ -126,14 +127,16 @@ static gboolean
 find_sensors (GUdevClient *client,
 	      SensorData  *data)
 {
-	GList *devices, *input, *platform, *l;
+	GList *devices, *input, *platform, *i2c, *l;
 	gboolean found = FALSE;
 
 	devices = g_udev_client_query_by_subsystem (client, "iio");
 	input = g_udev_client_query_by_subsystem (client, "input");
 	platform = g_udev_client_query_by_subsystem (client, "platform");
+	i2c = g_udev_client_query_by_subsystem (client, "i2c");
 	devices = g_list_concat (devices, input);
 	devices = g_list_concat (devices, platform);
+	devices = g_list_concat (devices, i2c);
 #ifdef HAS_LIBSSC
 	GList *fastrpc;
 	fastrpc = g_udev_client_query_by_subsystem (client, "misc");
@@ -716,12 +719,12 @@ bus_acquired_handler (GDBusConnection *connection,
 		"iio",
 		"input",
 		"platform",
+		"i2c",
 #ifdef HAS_LIBSSC
 		"misc",
 #endif
 		NULL
     };
-	guint i;
 
 	g_dbus_connection_register_object (connection,
 					   SENSOR_PROXY_DBUS_PATH,

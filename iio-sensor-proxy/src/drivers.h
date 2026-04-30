@@ -149,6 +149,7 @@ driver_close (SensorDevice *sensor_device)
 	driver->close (sensor_device);
 }
 
+extern SensorDriver mxc6655_accel;
 extern SensorDriver iio_buffer_accel;
 extern SensorDriver iio_poll_accel;
 extern SensorDriver input_accel;
