@@ -1,0 +1,911 @@
+/*
+ * cthd_engine_defualt.cpp: Default thermal engine
+ *
+ * Copyright (C) 2013 Intel Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 or later as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ *
+ * Author Name <Srinivas.Pandruvada@linux.intel.com>
+ *
+ */
+
+#include <cstring>
+#include <dirent.h>
+#include <errno.h>
+#include <memory>
+#include <sys/types.h>
+#include "thd_engine_default.h"
+#include "thd_zone_cpu.h"
+#include "thd_zone_generic.h"
+#include "thd_cdev_gen_sysfs.h"
+#include "thd_cdev_cpufreq.h"
+#include "thd_cdev_rapl.h"
+#include "thd_cdev_intel_pstate_driver.h"
+#include "thd_cdev_rapl_dram.h"
+#include "thd_sensor_virtual.h"
+#include "thd_cdev_backlight.h"
+#include "thd_int3400.h"
+#include "thd_sensor_rapl_power.h"
+#include "thd_zone_rapl_power.h"
+#include "thd_platform.h"
+#include "thd_platform_intel.h"
+#include "thd_util.h"
+
+
+// Default CPU cooling devices, which are not part of thermal sysfs
+// Since non trivial initialization is not supported, we init all fields even if they are not needed
+/* Some security scan handler can't parse, the following block and generate unnecessary errors.
+ * hiding good ones. So init in old style compatible to C++
+
+ static cooling_dev_t cpu_def_cooling_devices[] = {
+ {	.status = true,
+ .mask = CDEV_DEF_BIT_UNIT_VAL | CDEV_DEF_BIT_READ_BACK | CDEV_DEF_BIT_MIN_STATE | CDEV_DEF_BIT_STEP,
+ .index = 0, .unit_val = ABSOULUTE_VALUE, .min_state = 0, .max_state = 0, .inc_dec_step = 5,
+ .read_back = false, .auto_down_control = false,
+ .type_string = "intel_powerclamp", .path_str = "",
+ .debounce_interval = 4, .pid_enable = false,
+ .pid = {0.0, 0.0, 0.0}},
+ };
+ */
+static const cooling_dev_t cpu_def_cooling_devices[] = {
+		{ true, CDEV_DEF_BIT_UNIT_VAL
+				| CDEV_DEF_BIT_READ_BACK | CDEV_DEF_BIT_MIN_STATE | CDEV_DEF_BIT_STEP,
+				0, ABSOULUTE_VALUE, 0, 0, 5, false, false, "intel_powerclamp", "", 4,
+				false, { 0.0, 0.0, 0.0 },"" },
+		{ true, CDEV_DEF_BIT_UNIT_VAL
+				| CDEV_DEF_BIT_READ_BACK | CDEV_DEF_BIT_MIN_STATE | CDEV_DEF_BIT_STEP,
+				0, ABSOULUTE_VALUE, 0, 100, 5, false, false, "LCD", "", 4, false, { 0.0,
+				0.0, 0.0 },"" } };
+
+cthd_engine_default::~cthd_engine_default() {
+}
+
+int cthd_engine_default::read_thermal_sensors() {
+	int index;
+	DIR *dir;
+	struct dirent *entry;
+	cthd_sensor *sensor;
+	const std::string base_path[] = { "/sys/devices/platform/",
+			"/sys/class/hwmon/" };
+	int i;
+
+	thd_read_default_thermal_sensors();
+	index = current_sensor_index;
+
+	sensor = search_sensor("pkg-temp-0");
+	if (sensor) {
+		// Force this to support async
+		sensor->set_async_capable(true);
+	}
+
+	sensor = search_sensor("x86_pkg_temp");
+	if (sensor) {
+		// Force this to support async
+		sensor->set_async_capable(true);
+	}
+
+	sensor = search_sensor("soc_dts0");
+	if (sensor) {
+		// Force this to support async
+		sensor->set_async_capable(true);
+	}
+
+	// Default CPU temperature zone
+	// Find path to read DTS temperature
+	for (i = 0; i < 2; ++i) {
+		if ((dir = opendir(base_path[i].c_str())) != nullptr) {
+			while ((entry = readdir(dir)) != nullptr) {
+				if (!strncmp(entry->d_name, "coretemp.", strlen("coretemp."))
+						|| !strncmp(entry->d_name, "hwmon", strlen("hwmon"))) {
+
+					// Check name
+					std::string name_path = base_path[i] + entry->d_name
+							+ "/name";
+					csys_fs name_sysfs(name_path);
+					if (!name_sysfs.exists()) {
+						thd_log_info("dts %s doesn't exist\n",
+								name_path.c_str());
+						continue;
+					}
+					std::string name;
+					if (name_sysfs.read("", name) < 0) {
+						thd_log_info("dts name read failed for %s\n",
+								name_path.c_str());
+						continue;
+					}
+					if (name != "coretemp")
+						continue;
+
+					std::string temp_dir_path = base_path[i] + entry->d_name
+							+ "/";
+					DIR *temp_dir = nullptr;
+					struct dirent *temp_dir_entry = nullptr;
+					int len_temp_dir_entry = 0;
+					int len_input = strlen("_input");
+
+					if ((temp_dir = opendir(temp_dir_path.c_str())) != nullptr) {
+						while ((temp_dir_entry = readdir(temp_dir)) != nullptr) {
+							len_temp_dir_entry = strlen(temp_dir_entry->d_name);
+							if ((len_temp_dir_entry >= len_input
+									&& !thd_strcmp_n(
+											temp_dir_entry->d_name
+													+ len_temp_dir_entry
+													- len_input, "_input"))
+									&& (!strncmp(temp_dir_entry->d_name, "temp",
+											strlen("temp")))) {
+
+								std::unique_ptr<cthd_sensor> sensor(new cthd_sensor(index,
+										temp_dir_path + temp_dir_entry->d_name,
+										"hwmon", SENSOR_TYPE_RAW));
+								if (sensor->sensor_update() != THD_SUCCESS) {
+									closedir(temp_dir);
+									closedir(dir);
+									return THD_ERROR;
+								}
+								sensors.push_back(std::move(sensor));
+								++index;
+							}
+						}
+						closedir(temp_dir);
+					}
+				}
+			}
+			closedir(dir);
+		}
+		if (index != current_sensor_index)
+			break;
+	}
+	if (index == current_sensor_index) {
+		// No coretemp sysfs exist, try hwmon
+		thd_log_warn("Thermal DTS: No coretemp sysfs found\n");
+	}
+
+	if (debug_mode_on()) {
+		// Only used for debug power using ThermalMonitor
+		std::unique_ptr<cthd_sensor_rapl_power> rapl_power(new cthd_sensor_rapl_power(index));
+		if (rapl_power->sensor_update() == THD_SUCCESS) {
+			sensors.push_back(std::move(rapl_power));
+			++index;
+		}
+	}
+
+	current_sensor_index = index;
+	// Add from XML sensor config
+	if (!parser_init() && parser.platform_matched()) {
+		for (int i = 0; i < parser.sensor_count(); ++i) {
+			thermal_sensor_t *sensor_config = parser.get_sensor_dev_index(i);
+			if (!sensor_config)
+				continue;
+			cthd_sensor *sensor = search_sensor(sensor_config->name);
+			if (sensor) {
+				if (sensor_config->mask & SENSOR_DEF_BIT_PATH)
+					sensor->update_path(sensor_config->path);
+				if (sensor_config->mask & SENSOR_DEF_BIT_ASYNC_CAPABLE)
+					sensor->set_async_capable(sensor_config->async_capable);
+			} else {
+				std::unique_ptr<cthd_sensor> sensor_new;
+				if (sensor_config->virtual_sensor) {
+					std::unique_ptr<cthd_sensor_virtual> sensor_virt;
+					std::string dummy = "";
+
+					if (!sensor_config->link_sensors.empty()) {
+						sensor_virt.reset(new cthd_sensor_virtual(index,
+								sensor_config->name, dummy, 0, 0));
+
+						for (unsigned int j = 0;
+								j < sensor_config->link_sensors.size(); ++j) {
+							std::string target_name = sensor_config->link_sensors[j].name;
+
+							if (sensor_config->link_sensors[j].power_sensor) {
+								std::string name = "rapl_pkg_power";
+								if (!search_sensor(name)) {
+									std::unique_ptr<cthd_sensor_rapl_power> rapl_power(new cthd_sensor_rapl_power(index));
+									if (rapl_power->sensor_update() == THD_SUCCESS) {
+										sensors.push_back(std::move(rapl_power));
+										++index;
+									}
+								}
+							}
+
+							if (sensor_virt->add_target(target_name,
+									sensor_config->link_sensors[j].coeff,
+									sensor_config->link_sensors[j].offset,
+									sensor_config->link_sensors[j].power_sensor)
+									!= THD_SUCCESS) {
+								sensor_virt.reset();
+								break;
+							}
+						}
+					} else {
+						sensor_virt.reset(new cthd_sensor_virtual(index,
+								sensor_config->name,
+								sensor_config->sensor_link.name,
+								sensor_config->sensor_link.multiplier,
+								sensor_config->sensor_link.offset));
+					}
+
+					if (!sensor_virt)
+						continue;
+
+					for (unsigned int j = 0;
+							j < sensor_config->polling_table.size(); ++j) {
+						struct polling_table_entry entry;
+
+						entry.virtual_temp = sensor_config->polling_table[j].virtual_temp;
+						entry.sample_period = sensor_config->polling_table[j].sample_period;
+						sensor_virt->update_polling_table(entry);
+					}
+					if (sensor_virt->sensor_update() != THD_SUCCESS) {
+						continue;
+					}
+					if (sensor_config->polling_table.empty())
+						thd_log_info("No polling interval is defined\n");
+					sensor_new = std::move(sensor_virt);
+				} else {
+					if (!starts_with(sensor_config->path, "/sys/")) {
+						thd_log_debug( "Invalid sysfs path or allowed path %s\n",
+								sensor_config->path.c_str());
+						continue;
+					}
+
+					sensor_new.reset(new cthd_sensor(index, sensor_config->path,
+							sensor_config->name, SENSOR_TYPE_RAW));
+					if (sensor_new->sensor_update() != THD_SUCCESS) {
+						continue;
+					}
+				}
+				if (sensor_new) {
+					sensors.push_back(std::move(sensor_new));
+					++index;
+				}
+			}
+		}
+	}
+
+	current_sensor_index = index;
+
+	for (unsigned int i = 0; i < sensors.size(); ++i) {
+		sensors[i]->sensor_dump();
+	}
+
+	return THD_SUCCESS;
+}
+
+bool cthd_engine_default::add_int340x_processor_dev(void)
+{
+	if (thd_ignore_default_control)
+		return false;
+
+	/* Specialized processor thermal device names */
+	cthd_zone *processor_thermal = nullptr, *acpi_thermal = nullptr;
+	cthd_INT3400 int3400(uuid);
+	unsigned int passive, new_passive = 0, critical = 0;
+
+	if (int3400.match_supported_uuid() == THD_SUCCESS) {
+		processor_thermal = search_zone("B0D4");
+	}
+
+	if (!processor_thermal)
+		processor_thermal = search_zone("B0DB");
+	if (!processor_thermal)
+		processor_thermal = search_zone("TCPU");
+
+	if (processor_thermal) {
+		/* Check If there is a valid passive trip */
+		for (unsigned int i = 0; i < processor_thermal->get_trip_count(); ++i) {
+			cthd_trip_point *trip = processor_thermal->get_trip_at_index(i);
+			if (trip && trip->get_trip_type() == PASSIVE
+					&& (passive = trip->get_trip_temp())
+					&& passive > processor_thermal_min_passive) {
+				/* Need to honor ACPI _CRT, otherwise the system could be shut down by Linux kernel */
+				acpi_thermal = search_zone("acpitz");
+				if (acpi_thermal) {
+					for (unsigned int i = 0; i < acpi_thermal->get_trip_count(); ++i) {
+						cthd_trip_point *crit = acpi_thermal->get_trip_at_index(i);
+						if (crit && crit->get_trip_type() == CRITICAL) {
+							critical = crit->get_trip_temp();
+							break;
+						}
+					}
+				}
+
+				if (critical && passive + 5 * 1000 >= critical) {
+					new_passive = critical - 15 * 1000;
+					trip->thd_trip_update_set_point(new_passive);
+				}
+
+				thd_log_info("Processor thermal device is present\n");
+				thd_log_info("It will act as CPU thermal zone !!\n");
+				thd_log_info("Processor thermal device passive Trip is %u\n",
+						trip->get_trip_temp());
+
+				processor_thermal->set_zone_active();
+
+				cthd_cdev *cdev;
+
+				cdev = search_cdev("rapl_controller");
+				if (cdev) {
+					processor_thermal->bind_cooling_device(PASSIVE, 0, cdev,
+							cthd_trip_point::default_influence);
+				}
+				cdev = search_cdev("intel_pstate");
+				if (cdev) {
+					processor_thermal->bind_cooling_device(PASSIVE, 0, cdev,
+							cthd_trip_point::default_influence);
+				}
+
+				cdev = search_cdev("intel_powerclamp");
+				if (cdev) {
+					processor_thermal->bind_cooling_device(PASSIVE, 0, cdev,
+							cthd_trip_point::default_influence);
+				}
+
+				cdev = search_cdev("Processor");
+				if (cdev) {
+					processor_thermal->bind_cooling_device(PASSIVE, 0, cdev,
+							cthd_trip_point::default_influence);
+				}
+
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+void cthd_engine_default::disable_cpu_zone(thermal_zone_t *zone_config) {
+
+	if (parser.thermal_conf_auto()) {
+		cthd_zone *cpu_zone = search_zone("cpu");
+		if (cpu_zone)
+			cpu_zone->set_zone_inactive();
+		return;
+	}
+
+	cthd_zone *zone = search_zone(zone_config->type);
+	if (!zone)
+		return;
+
+	if (!zone->zone_active_status())
+		return;
+
+	for (unsigned int k = 0; k < zone_config->trip_pts.size(); ++k) {
+		trip_point_t &trip_pt_config = zone_config->trip_pts[k];
+		cthd_sensor *sensor = search_sensor(trip_pt_config.sensor_type);
+		if (sensor && sensor->get_sensor_type() == "B0D4") {
+			thd_log_info(
+					"B0D4 is defined in thermal-config so deactivating default cpu\n");
+			cthd_zone *cpu_zone = search_zone("cpu");
+			if (cpu_zone)
+				cpu_zone->set_zone_inactive();
+		}
+	}
+}
+
+int cthd_engine_default::read_thermal_zones() {
+	int index;
+	DIR *dir;
+	struct dirent *entry;
+	const std::string base_path[] = { "/sys/devices/platform/",
+			"/sys/class/hwmon/" };
+	int i;
+
+	thd_read_default_thermal_zones();
+	index = current_zone_index;
+
+	bool valid_int340x = add_int340x_processor_dev();
+
+	if (!thd_ignore_default_control && !valid_int340x && !search_zone("cpu")) {
+		bool cpu_zone_created = false;
+		thd_log_info("zone cpu will be created\n");
+		// Default CPU temperature zone
+		// Find path to read DTS temperature
+		for (i = 0; i < 2; ++i) {
+			if ((dir = opendir(base_path[i].c_str())) != nullptr) {
+				while ((entry = readdir(dir)) != nullptr) {
+					if (!strncmp(entry->d_name, "coretemp.",
+							strlen("coretemp."))
+							|| !strncmp(entry->d_name, "hwmon",
+									strlen("hwmon"))) {
+
+						std::string name_path = base_path[i] + entry->d_name
+								+ "/name";
+						csys_fs name_sysfs(name_path);
+						if (!name_sysfs.exists()) {
+							thd_log_info("dts zone %s doesn't exist\n",
+									name_path.c_str());
+							continue;
+						}
+						std::string name;
+						if (name_sysfs.read("", name) < 0) {
+							thd_log_info("dts zone name read failed for %s\n",
+									name_path.c_str());
+							continue;
+						}
+						thd_log_info("%s->%s\n", name_path.c_str(),
+								name.c_str());
+						if (name != "coretemp")
+							continue;
+
+						std::unique_ptr<cthd_zone_cpu> zone(new cthd_zone_cpu(index,
+								base_path[i] + entry->d_name + "/",
+								atoi(entry->d_name + strlen("coretemp."))));
+						if (zone->zone_update() == THD_SUCCESS) {
+							zone->set_zone_active();
+							zones.push_back(std::move(zone));
+							cpu_zone_created = true;
+							++index;
+						}
+					}
+				}
+				closedir(dir);
+			}
+			if (cpu_zone_created)
+				break;
+		}
+
+		if (!cpu_zone_created) {
+			thd_log_error(
+					"Thermal DTS or hwmon: No Zones present Need to configure manually\n");
+		}
+	}
+
+	current_zone_index = index;
+
+	// Add from XML thermal zone
+	if (!parser_init() && parser.platform_matched()) {
+		for (int i = 0; i < parser.zone_count(); ++i) {
+			bool activate;
+			thermal_zone_t *zone_config = parser.get_zone_dev_index(i);
+			if (!zone_config)
+				continue;
+			thd_log_debug("Look for Zone  [%s]\n", zone_config->type.c_str());
+			cthd_zone *zone = search_zone(zone_config->type);
+			if (zone) {
+				activate = false;
+				thd_log_info("Zone already present %s\n",
+						zone_config->type.c_str());
+				for (unsigned int k = 0; k < zone_config->trip_pts.size();
+						++k) {
+					trip_point_t &trip_pt_config = zone_config->trip_pts[k];
+					thd_log_debug(
+							"Trip %d, temperature %d, Look for Search sensor %s\n",
+							k, trip_pt_config.temperature,
+							trip_pt_config.sensor_type.c_str());
+					cthd_sensor *sensor = search_sensor(
+							trip_pt_config.sensor_type);
+					if (!sensor) {
+						thd_log_error("XML zone: invalid sensor type [%s]\n",
+								trip_pt_config.sensor_type.c_str());
+						// This will update the trip temperature for the matching
+						// trip type
+						if (trip_pt_config.temperature) {
+							cthd_trip_point trip_pt(zone->get_trip_count(),
+									trip_pt_config.trip_pt_type,
+									trip_pt_config.temperature,
+									trip_pt_config.hyst, zone->get_zone_index(),
+									-1, trip_pt_config.control_type);
+							zone->update_trip_temp(trip_pt);
+						}
+						continue;
+					}
+					zone->bind_sensor(sensor);
+					if (trip_pt_config.temperature) {
+
+						cthd_trip_point trip_pt(zone->get_trip_count(),
+								trip_pt_config.trip_pt_type,
+								trip_pt_config.temperature, trip_pt_config.hyst,
+								zone->get_zone_index(), sensor->get_index(),
+								trip_pt_config.control_type);
+
+						if (trip_pt_config.dependency.dependency) {
+							trip_pt.set_dependency(trip_pt_config.dependency.cdev, trip_pt_config.dependency.state);
+						}
+
+						// bind cdev
+						for (unsigned int j = 0;
+								j < trip_pt_config.cdev_trips.size(); ++j) {
+							cthd_cdev *cdev = search_cdev(
+									trip_pt_config.cdev_trips[j].type);
+							if (cdev) {
+								trip_pt.thd_trip_point_add_cdev(*cdev,
+										trip_pt_config.cdev_trips[j].influence,
+										trip_pt_config.cdev_trips[j].sampling_period,
+										trip_pt_config.cdev_trips[j].target_state_valid,
+										trip_pt_config.cdev_trips[j].target_state,
+									&trip_pt_config.cdev_trips[j].pid_param,
+									trip_pt_config.cdev_trips[j].min_max_valid,
+									trip_pt_config.cdev_trips[j].target_min_state,
+									trip_pt_config.cdev_trips[j].target_max_state);
+								zone->zone_cdev_set_binded();
+								activate = true;
+							}
+						}
+						zone->add_trip(trip_pt);
+					} else {
+						thd_log_debug("Trip temp == 0 is in zone %s\n",
+								zone_config->type.c_str());
+						// Try to find some existing non zero trips and associate the cdevs
+						// This is the way from an XML config a generic cooling device
+						// can be bound. For example from ACPI thermal relationships tables
+						for (unsigned int j = 0;
+								j < trip_pt_config.cdev_trips.size(); ++j) {
+							cthd_cdev *cdev = search_cdev(
+									trip_pt_config.cdev_trips[j].type);
+							if (!cdev) {
+								thd_log_info("cdev for type %s not found\n",
+										trip_pt_config.cdev_trips[j].type.c_str());
+							}
+							if (cdev) {
+								if (zone->bind_cooling_device(
+										trip_pt_config.trip_pt_type, 0, cdev,
+										trip_pt_config.cdev_trips[j].influence,
+										trip_pt_config.cdev_trips[j].sampling_period,
+										trip_pt_config.cdev_trips[j].target_state_valid,
+									trip_pt_config.cdev_trips[j].target_state,
+									trip_pt_config.cdev_trips[j].min_max_valid,
+									trip_pt_config.cdev_trips[j].target_min_state,
+									trip_pt_config.cdev_trips[j].target_max_state) == THD_SUCCESS) {
+									thd_log_debug(
+											"bind %s to trip to sensor %s\n",
+											cdev->get_cdev_type().c_str(),
+											sensor->get_sensor_type().c_str());
+									activate = true;
+								} else {
+									thd_log_debug(
+											"bind_cooling_device failed for cdev %s trip %s\n",
+											cdev->get_cdev_type().c_str(),
+											sensor->get_sensor_type().c_str());
+								}
+
+							}
+						}
+					}
+				}
+				if (activate) {
+					thd_log_debug("Activate zone %s\n",
+							zone->get_zone_type().c_str());
+					zone->set_zone_active();
+				}
+			} else {
+				std::unique_ptr<cthd_zone_generic> zone(new cthd_zone_generic(index, i,
+						zone_config->type));
+				if (zone->zone_update() == THD_SUCCESS) {
+					zone->set_zone_active();
+					++index;
+					zones.push_back(std::move(zone));
+				}
+			}
+			disable_cpu_zone(zone_config);
+		}
+	}
+	current_zone_index = index;
+
+	if (debug_mode_on()) {
+		// Only used for debug power using ThermalMonitor
+		std::unique_ptr<cthd_zone_rapl_power> rapl_power(new cthd_zone_rapl_power(index));
+		if (rapl_power->zone_update() == THD_SUCCESS) {
+			rapl_power->set_zone_active();
+			zones.push_back(std::move(rapl_power));
+			++index;
+		}
+		current_zone_index = index;
+	}
+
+	if (!zones.size()) {
+		thd_log_info("No Thermal Zones found\n");
+		return THD_FATAL_ERROR;
+	}
+#ifdef AUTO_DETECT_RELATIONSHIP
+	def_binding.do_default_binding(cdevs);
+#endif
+	thd_log_info("\n\n ZONE DUMP BEGIN\n");
+	for (unsigned int i = 0; i < zones.size(); ++i) {
+		zones[i]->zone_dump();
+	}
+	thd_log_info("\n\n ZONE DUMP END\n");
+
+	return THD_SUCCESS;
+}
+
+int cthd_engine_default::add_replace_cdev(const cooling_dev_t *config) {
+	cthd_cdev *cdev;
+	bool cdev_present = false;
+	bool percent_unit = false;
+
+	// Check if there is existing cdev with this name and path
+	cdev = search_cdev(config->type_string);
+	if (cdev) {
+		cdev_present = true;
+		// Also check for path, some device like FAN has multiple paths for same type_str
+		std::string base_path = cdev->get_base_path();
+		if (config->path_str.size() && config->path_str != base_path) {
+			cdev_present = false;
+		}
+	}
+	if (!cdev_present) {
+		// create new
+		std::unique_ptr<cthd_cdev> tmp(new cthd_gen_sysfs_cdev(current_cdev_index, config->path_str));
+		if (!tmp)
+			return THD_ERROR;
+		tmp->set_cdev_type(config->type_string);
+		if (tmp->update() != THD_SUCCESS) {
+			return THD_ERROR;
+		}
+		cdevs.push_back(std::move(tmp));
+		cdev = cdevs.back().get();
+		++current_cdev_index;
+	}
+
+	if (config->mask & CDEV_DEF_BIT_UNIT_VAL) {
+		if (config->unit_val == RELATIVE_PERCENTAGES)
+			percent_unit = true;
+	}
+	if (config->mask & CDEV_DEF_BIT_AUTO_DOWN)
+		cdev->set_down_adjust_control(config->auto_down_control);
+	if (config->mask & CDEV_DEF_BIT_STEP) {
+		if (percent_unit)
+			cdev->set_inc_dec_value(
+					cdev->get_curr_state() * config->inc_dec_step / 100);
+		else
+			cdev->set_inc_dec_value(config->inc_dec_step);
+	}
+	if (config->mask & CDEV_DEF_BIT_MIN_STATE) {
+		if (percent_unit)
+			cdev->thd_cdev_set_min_state_param(
+					cdev->get_curr_state() * config->min_state / 100);
+		else
+			cdev->thd_cdev_set_min_state_param(config->min_state);
+	}
+	if (config->mask & CDEV_DEF_BIT_MAX_STATE) {
+		if (percent_unit)
+			cdev->thd_cdev_set_max_state_param(
+					cdev->get_curr_state() * config->max_state / 100);
+		else
+			cdev->thd_cdev_set_max_state_param(config->max_state);
+	}
+	if (config->mask & CDEV_DEF_BIT_READ_BACK)
+		cdev->thd_cdev_set_read_back_param(config->read_back);
+
+	if (config->mask & CDEV_DEF_BIT_DEBOUNCE_VAL)
+		cdev->set_debounce_interval(config->debounce_interval);
+
+	if (config->mask & CDEV_DEF_BIT_PID_PARAMS) {
+		cdev->enable_pid();
+		cdev->set_pid_param(config->pid.Kp, config->pid.Ki, config->pid.Kd);
+	}
+
+	if (config->mask & CDEV_DEF_BIT_WRITE_PREFIX)
+		cdev->thd_cdev_set_write_prefix(config->write_prefix);
+
+	return THD_SUCCESS;
+
+}
+
+int cthd_engine_default::read_cooling_devices() {
+	int size;
+	int i;
+
+	// Read first all the default cooling devices added by kernel
+	thd_read_default_cooling_devices();
+
+	// Add RAPL cooling device
+	std::unique_ptr<cthd_sysfs_cdev_rapl> rapl_dev(new cthd_sysfs_cdev_rapl(
+			current_cdev_index, 0));
+	if (!rapl_dev)
+			return THD_ERROR;
+	cthd_sysfs_cdev_rapl *rapl_dev_borrow = nullptr;
+	rapl_dev->set_cdev_type("rapl_controller");
+	rapl_dev->set_cdev_alias("B0D4");
+	if (rapl_dev->update() == THD_SUCCESS) {
+		rapl_dev_borrow = rapl_dev.get();
+		cdevs.push_back(std::move(rapl_dev));
+		++current_cdev_index;
+	} else {
+		rapl_dev.reset();
+	}
+
+	// Add RAPL mmio cooling device
+	if (!disable_active_power && (parser.thermal_matched_platform_index() >= 0 || force_mmio_rapl)) {
+		std::unique_ptr<cthd_sysfs_cdev_rapl> rapl_mmio_dev(
+				new cthd_sysfs_cdev_rapl(
+						current_cdev_index, 0,
+						"/sys/devices/virtual/powercap/intel-rapl-mmio/intel-rapl-mmio:0/"));
+		rapl_mmio_dev->set_cdev_type("rapl_controller_mmio");
+		if (rapl_mmio_dev->update() == THD_SUCCESS) {
+
+			// Prefer MMIO access over MSR access for B0D4
+			if (rapl_dev_borrow) {
+				struct adaptive_target target = {};
+
+				rapl_dev_borrow->set_cdev_alias("");
+
+				if (adaptive_mode) {
+					thd_log_info("Disable rapl-msr interface and use rapl-mmio\n");
+					target.code = "PL1MAX";
+					target.argument = "200000";
+					rapl_dev_borrow->set_adaptive_target(target);
+				}
+			}
+
+			rapl_mmio_dev->set_cdev_alias("B0D4");
+			cdevs.push_back(std::move(rapl_mmio_dev));
+			++current_cdev_index;
+
+		}
+	}
+
+	// Add Intel P state driver as cdev
+	std::unique_ptr<cthd_intel_p_state_cdev> pstate_dev(new cthd_intel_p_state_cdev(
+			current_cdev_index));
+	pstate_dev->set_cdev_type("intel_pstate");
+	if (pstate_dev->update() == THD_SUCCESS) {
+		cdevs.push_back(std::move(pstate_dev));
+		++current_cdev_index;
+	}
+
+	// Add statically defined cooling devices
+	size = sizeof(cpu_def_cooling_devices) / sizeof(cooling_dev_t);
+	for (i = 0; i < size; ++i) {
+		add_replace_cdev(&cpu_def_cooling_devices[i]);
+	}
+
+	std::unique_ptr<cthd_cdev_cpufreq> cpu_freq_dev(new cthd_cdev_cpufreq(current_cdev_index,
+			-1));
+	cpu_freq_dev->set_cdev_type("cpufreq");
+	if (cpu_freq_dev->update() == THD_SUCCESS) {
+		cdevs.push_back(std::move(cpu_freq_dev));
+		++current_cdev_index;
+	}
+
+	std::unique_ptr<cthd_sysfs_cdev_rapl_dram> rapl_dram_dev(new cthd_sysfs_cdev_rapl_dram(
+			current_cdev_index, 0));
+	rapl_dram_dev->set_cdev_type("rapl_controller_dram");
+	if (rapl_dram_dev->update() == THD_SUCCESS) {
+		cdevs.push_back(std::move(rapl_dram_dev));
+		++current_cdev_index;
+	}
+
+	cthd_cdev *cdev = search_cdev("LCD");
+	if (!cdev) {
+		std::unique_ptr<cthd_cdev_backlight> backlight_dev(new cthd_cdev_backlight(
+				current_cdev_index, 0));
+		backlight_dev->set_cdev_type("LCD");
+		if (backlight_dev->update() == THD_SUCCESS) {
+			cdevs.push_back(std::move(backlight_dev));
+			++current_cdev_index;
+		}
+	}
+
+	// Add from XML cooling device config
+	if (!parser_init() && parser.platform_matched()) {
+		for (int i = 0; i < parser.cdev_count(); ++i) {
+			cooling_dev_t *cdev_config = parser.get_cool_dev_index(i);
+			if (!cdev_config)
+				continue;
+			add_replace_cdev(cdev_config);
+		}
+	}
+
+	// Dump all cooling devices
+	for (unsigned i = 0; i < cdevs.size(); ++i) {
+		cdevs[i]->cdev_dump();
+	}
+
+	return THD_SUCCESS;
+}
+
+// Thermal engine
+std::unique_ptr<cthd_engine> thd_engine;
+
+int thd_engine_create_default_engine(bool ignore_cpuid_check,
+		bool exclusive_control, const char *conf_file) {
+	int res;
+	thd_engine.reset(new cthd_engine_default());
+	if (!thd_engine)
+		return THD_ERROR;
+
+	if (exclusive_control)
+		thd_engine->set_control_mode(EXCLUSIVE);
+
+	// Initialize thermald objects
+	thd_engine->set_poll_interval(thd_poll_interval);
+	if (conf_file)
+		thd_engine->set_config_file(conf_file);
+
+	res = thd_engine->thd_engine_init(ignore_cpuid_check);
+	if (res != THD_SUCCESS) {
+		if (res == THD_FATAL_ERROR)
+			thd_log_error("THD engine init failed\n");
+		else
+			thd_log_msg("THD engine init failed\n");
+	}
+
+	res = thd_engine->thd_engine_start();
+	if (res != THD_SUCCESS) {
+		if (res == THD_FATAL_ERROR)
+			thd_log_error("THD engine start failed\n");
+		else
+			thd_log_msg("THD engine start failed\n");
+	}
+
+	return res;
+}
+
+void cthd_engine_default::workarounds()
+{
+	if (!workaround_enabled)
+		return;
+
+	// Every 30 seconds repeat
+	if (!disable_active_power && !workaround_interval) {
+		// Create platform instance and call workaround
+		std::unique_ptr<cthd_platform> platform = cthd_platform::create_platform();
+		if (platform) {
+			platform->workaround_rapl_mmio_power();
+		}
+
+		workaround_tcc_offset();
+		workaround_interval = 7;
+	} else {
+		--workaround_interval;
+	}
+}
+
+
+void cthd_engine_default::workaround_tcc_offset(void)
+{
+#ifndef ANDROID
+	csys_fs sys_fs;
+	int tcc;
+
+	if (tcc_offset_checked && tcc_offset_low)
+		return;
+
+	if (parser.thermal_matched_platform_index() < 0) {
+		tcc_offset_checked = 1;
+		tcc_offset_low = 1;
+		return;
+	}
+
+	if (sys_fs.exists("/sys/bus/pci/devices/0000:00:04.0/tcc_offset_degree_celsius")) {
+		if (sys_fs.read("/sys/bus/pci/devices/0000:00:04.0/tcc_offset_degree_celsius", &tcc) <= 0) {
+			tcc_offset_checked = 1;
+			tcc_offset_low = 1;
+			return;
+		}
+
+		if (tcc > 10) {
+			int ret;
+
+			ret = sys_fs.write("/sys/bus/pci/devices/0000:00:04.0/tcc_offset_degree_celsius", 5);
+			if (ret < 0)
+				tcc_offset_low = 1; // probably locked so retryA
+
+			tcc_offset_checked = 1;
+		} else {
+			if (!tcc_offset_checked)
+				tcc_offset_low = 1;
+			tcc_offset_checked = 1;
+		}
+	} else {
+		thd_log_info("Kernel update is required to update TCC\n");
+		tcc_offset_checked = 1;
+		tcc_offset_low = 1;
+	}
+#endif
+}
