@@ -16,16 +16,10 @@ modules/goodix_ts/goodix.h
 modules/goodix_ts/goodix_fwupload.c
 modules/goodix_ts/.patched.stamp
 
-# vbt-patcher build outputs and downloaded headers
-vbt-patcher/vbt_patch
-vbt-patcher/vbt_refresh_rate
-vbt-patcher/intel_vbt_defs.h
-vbt-patcher/intel_dsi_vbt_defs.h
-
-# vbt-patcher data files (device-specific dumps, not source)
-vbt-patcher/i915_vbt*
-vbt-patcher/i915_display_info
-vbt-patcher/vbt
+# vbt_patch binary and downloaded headers
+vbt_patch/intel_vbt_defs.h
+vbt_patch/intel_dsi_vbt_defs.h
+vbt_patch/vbt_patch
 
 # iio-sensor-proxy meson build
 iio-sensor-proxy/_build/
