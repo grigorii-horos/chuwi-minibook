@@ -1,0 +1,2 @@
+obj-m := goodix_ts.o
+goodix_ts-y := goodix.o goodix_fwupload.o
