@@ -20,46 +20,24 @@ throttles at 85 C) or runs unmanaged with no software thermal policy at all.
 - `intel_rapl_common` module loaded
 - CFG Lock disabled and TCC offset reduced (see below)
 
-## Build and install
+## Install
 
-### BIOS tweaks
+See [GUIDE.md](../GUIDE.md#6-thermald). The service unit runs
+`thermald --systemd --dbus-enable --adaptive`; this build requires
+`--adaptive` mode and will refuse to start without it.
 
-Two hidden BIOS settings affect how well thermald can do its job. To
-access them, unlock the hidden menus first:
+## BIOS settings
 
-```
-echo 1 | sudo tee /sys/devices/platform/minibook_ec/bios_unlock
-```
+Two hidden BIOS settings (see [GUIDE.md](../GUIDE.md#5-bios-tweaks)
+for how to access them) affect how well thermald can do its job:
 
-Reboot into BIOS setup (press `DEL` during POST). The hidden menus are
-now visible.
+**CFG Lock** -- thermald adjusts CPU power limits at runtime, and CFG
+Lock blocks those MSR writes entirely. Must be disabled.
 
-**Disable CFG Lock:** Advanced > CPU Configuration > CPU Lock
-Configuration > **CFG Lock** > Disabled. Thermald adjusts CPU power
-limits at runtime. CFG Lock blocks these writes entirely.
-
-**Reduce TCC Activation Offset:** Advanced > CPU Configuration > CPU Lock
-Configuration > **TCC Activation Offset** > 10. The factory setting (20)
-makes the CPU start hardware throttling at 85 C, which is too early.
-Changing it to 10 moves that point to 95 C, giving thermald more room to
-manage thermals in software before the CPU's own emergency throttle kicks
-in.
-
-Save and reboot.
-
-### Build
-
-```
-cd thermal_daemon
-./configure
-make
-sudo make install
-sudo systemctl daemon-reload
-sudo systemctl enable --now thermald
-```
-
-The service unit runs `thermald --systemd --dbus-enable --adaptive`. This
-build requires `--adaptive` mode and will refuse to start without it.
+**TCC Activation Offset** -- the factory setting of 20 makes the CPU
+start hardware throttling at 85 C, which is too early. Reducing it to
+10 moves that point to 95 C, giving thermald more room to manage
+thermals in software before the CPU's own emergency throttle kicks in.
 
 ## Verify it is working
 

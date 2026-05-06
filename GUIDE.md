@@ -18,7 +18,7 @@ sudo tools/check-status.sh
 | Section            | What it checks                                                                                                    |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
 | **device**         | DMI vendor/product, CPU model, microcode, BIOS version, DSI display, sleep mode                                   |
-| **kernel cmdline** | `i915.vbt_firmware` (custom VBT), `i915.enable_psr=0` (PSR fix), `video=DSI-1:panel_orientation` (panel rotation) |
+| **kernel cmdline** | `i915.vbt_firmware` (custom VBT), `i915.enable_psr=0` (PSR fix)                                                   |
 | **vbt**            | Panel refresh rate from VBT Block 58 (needs `intel_vbt_decode` and sudo)                                          |
 | **prerequisites**  | Build tools: dkms, clang, curl, patch, meson, ninja, kernel headers                                               |
 | **modules**        | DKMS install state, loaded state, and boot config for each kernel module                                          |
@@ -130,6 +130,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now thermald
 ```
 
+On Arch, use `make install-arch` instead -- it builds via `makepkg` so
+pacman tracks the install. After installing, add `IgnorePkg = thermald`
+to `/etc/pacman.conf` so system upgrades don't replace it with the
+unpatched repo build.
+
 Verify: `journalctl -u thermald | grep minibook`. See
 [thermald.md](docs/thermald.md) for patch details and tunable parameters.
 
@@ -141,6 +146,21 @@ Screen rotation and tablet mode via dual accelerometers.
 cd iio-sensor-proxy
 make && sudo make install
 sudo systemctl restart iio-sensor-proxy
+```
+
+On Arch, use `make install-arch` instead -- it builds via `makepkg` so
+pacman tracks the install. After installing, add
+`IgnorePkg = iio-sensor-proxy` to `/etc/pacman.conf` so system upgrades
+don't replace it with the unpatched repo build.
+
+If using [Niri](https://github.com/niri-wm/niri), also install
+[`iio-niri`](https://github.com/Zhaith-Izaliel/iio-niri) to bridge
+orientation events to the compositor for screen auto-rotation, and add
+it to one of your Niri config files (e.g.
+`~/.config/niri/cfg/autostart.kdl`):
+
+```
+spawn-at-startup "iio-niri" "listen" "--monitor" "DSI-1"
 ```
 
 Verify: `monitor-sensor` and tilt the device. See
@@ -233,10 +253,21 @@ issue with DSI link tearing.
 
 ### Display rotation
 
-There are several ways to rotate the display, at different levels of the
-stack.
+If you run a daemon that bridges iio-sensor-proxy events to your
+compositor (e.g.
+[`iio-niri`](https://github.com/Zhaith-Izaliel/iio-niri) for Niri, or
+the built-in support in GNOME and KDE), you do not need any of the
+methods below. The patched iio-sensor-proxy reports `right-up` whenever
+the device is in laptop mode, so the compositor applies the 270°
+rotation dynamically. In tablet mode it switches to live accelerometer-
+based rotation. There is nothing to configure on the kernel/firmware
+side.
 
-#### Kernel command line (recommended)
+If you don't run such a daemon -- or your compositor does not consume
+orientation events -- pick one of the methods below for a fixed
+rotation.
+
+#### Kernel command line
 
 Add the `video=` parameter to the kernel command line in
 `/etc/default/limine`:

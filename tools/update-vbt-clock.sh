@@ -44,11 +44,12 @@ check_environment() {
   fi
 }
 
-check_vbt_tool() {
-  if [[ ! -x "${VBT_TOOL}" ]]; then
-    echo "vbt_patch not found — run 'make' in vbt_patch/ first" >&2
-    exit 1
+build_vbt_tool() {
+  if [[ -x "${VBT_TOOL}" ]]; then
+    return
   fi
+  echo "Building vbt_patch..."
+  make -C "$(dirname "${VBT_TOOL}")"
 }
 
 patch_vbt() {
@@ -127,7 +128,7 @@ main() {
     exit 1
   fi
 
-  check_vbt_tool
+  build_vbt_tool
   check_environment
   patch_vbt "$1"
   update_mkinitcpio

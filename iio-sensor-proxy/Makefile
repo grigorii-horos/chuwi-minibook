@@ -12,7 +12,10 @@ install: all
 uninstall:
 	ninja -C $(BUILDDIR) uninstall
 
+install-arch:
+	cd packaging/arch && makepkg -si
+
 clean:
 	rm -rf $(BUILDDIR)
 
-.PHONY: all install uninstall clean
+.PHONY: all install uninstall install-arch clean

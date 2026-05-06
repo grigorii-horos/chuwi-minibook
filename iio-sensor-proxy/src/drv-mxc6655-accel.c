@@ -1042,6 +1042,9 @@ update_orientation_debounce (SensorDevice *sensor_device, DrvData *drv_data,
 	if (new_orient < 0)
 		return;
 
+	if (drv_data->mode != 1)
+		new_orient = MXC_ORIENT_RIGHT;
+
 	if (new_orient != drv_data->pending_orient) {
 		drv_data->pending_orient = new_orient;
 		drv_data->orient_debounce = (new_orient != drv_data->cur_orient) ? 1 : 0;
@@ -1115,7 +1118,11 @@ poll_sensors (gpointer user_data)
 	a1 = calibrate (&raw1, drv_data->cal1);
 	a2 = calibrate (&raw2, drv_data->cal2);
 
-	update_orientation_debounce (sensor_device, drv_data, &a1);
+	{
+		Vec3 a1_orient = a1;
+		a1_orient.x = -a1_orient.x;
+		update_orientation_debounce (sensor_device, drv_data, &a1_orient);
+	}
 
 	if (fabsf (a1.y) < GRAVITY_MIN && fabsf (a2.y) < GRAVITY_MIN)
 		return G_SOURCE_CONTINUE;
@@ -1227,7 +1234,7 @@ mxc6655_set_polling (SensorDevice *sensor_device,
 		{
 			AccelReadings readings;
 
-			build_synthetic_readings (MXC_ORIENT_NORMAL, &readings);
+			build_synthetic_readings (MXC_ORIENT_RIGHT, &readings);
 			sensor_device->callback_func (sensor_device,
 						      (gpointer) &readings,
 						      sensor_device->user_data);

@@ -314,20 +314,6 @@ check_psr_param() {
   fi
 }
 
-check_panel_orientation_param() {
-  local cmdline="$1"
-  local val
-  val="$(cmdline_value "${cmdline}" "video")"
-  if [[ "${val}" == *"DSI-1:panel_orientation="* ]]; then
-    local orientation="${val##*panel_orientation=}"
-    orientation="${orientation%%,*}"
-    orientation="${orientation%% *}"
-    print_field "panel orientation" "${orientation}"
-  else
-    print_warn "panel orientation" "not set -- see GUIDE.md"
-  fi
-}
-
 check_cmdline() {
   echo ""
   echo "--- kernel cmdline ---"
@@ -338,7 +324,6 @@ check_cmdline() {
 
   check_vbt_firmware_param "${cmdline}"
   check_psr_param "${cmdline}"
-  check_panel_orientation_param "${cmdline}"
 }
 
 # --- prerequisites ---
@@ -445,6 +430,16 @@ check_service() {
   echo "${status}"
 }
 
+read_iio_version() {
+  local path
+  for path in /usr/libexec/iio-sensor-proxy /usr/lib/iio-sensor-proxy; do
+    if [[ -x "${path}" ]]; then
+      "${path}" -v 2>&1 | grep -oP 'version \K\S+' && return
+    fi
+  done
+  echo "NOT FOUND"
+}
+
 check_services() {
   echo ""
   echo "--- services ---"
@@ -454,8 +449,7 @@ check_services() {
   thermald_ver="$(thermald --version 2>&1 | head -1 || echo "NOT FOUND")"
   check_service "thermald" "${thermald_ver}"
 
-  iio_ver="$(/usr/libexec/iio-sensor-proxy -v 2>&1 \
-    | grep -oP 'version \K\S+' || echo "NOT FOUND")"
+  iio_ver="$(read_iio_version)"
   check_service "iio-sensor-proxy" "${iio_ver}"
 }
 

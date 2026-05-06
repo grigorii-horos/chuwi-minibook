@@ -1,0 +1,55 @@
+# Maintainer: Filip Stanis <filip@stanis.me>
+
+pkgname=thermald
+epoch=2
+pkgver=2.5.11.minibook1
+pkgrel=1
+pkgdesc='Linux thermal daemon (Chuwi MiniBook X build)'
+arch=('x86_64')
+url='https://github.com/fstanis/chuwi-minibook'
+license=('GPL-2.0-or-later')
+depends=('dbus-glib' 'libevdev' 'libxml2' 'upower')
+makedepends=('autoconf' 'automake' 'gtk-doc' 'pkgconf')
+source=()
+
+_source_root="${startdir}/../.."
+
+pkgver() {
+  awk -F"'" '/^PACKAGE_VERSION=/ {print $2; exit}' \
+    "${_source_root}/configure"
+}
+
+_clean_stale_autotools_artifacts() {
+  rm -f config.log config.status stamp-h1
+  find . -name Makefile -delete
+}
+
+_bootstrap_if_needed() {
+  if [[ -x ./configure ]]; then
+    return 0
+  fi
+  NO_CONFIGURE=1 ./autogen.sh
+}
+
+prepare() {
+  rm -rf "${srcdir}/src"
+  cp -a "${_source_root}" "${srcdir}/src"
+  cd "${srcdir}/src"
+  _clean_stale_autotools_artifacts
+}
+
+build() {
+  cd "${srcdir}/src"
+  _bootstrap_if_needed
+  ./configure \
+    --prefix=/usr \
+    --sysconfdir=/etc \
+    --localstatedir=/var \
+    --sbindir=/usr/bin
+  make
+}
+
+package() {
+  cd "${srcdir}/src"
+  make DESTDIR="${pkgdir}" install
+}

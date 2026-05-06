@@ -25,12 +25,9 @@ The fork source lives in `iio-sensor-proxy/`.
 
 ## Install
 
-```
-cd iio-sensor-proxy
-make
-sudo make install
-sudo systemctl restart iio-sensor-proxy
-```
+See [GUIDE.md](../GUIDE.md#7-iio-sensor-proxy).
+
+## Runtime requirement
 
 The `acpi_call` kernel module must be loaded for tablet mode transitions
 (the driver calls ACPI method `\_SB.ACMK.LTSM` to toggle the keyboard).
@@ -81,3 +78,12 @@ Each sample goes through:
    inverted). A debounce counter prevents rapid flickering. The final
    orientation is fed to iio-sensor-proxy's standard callback, which
    exposes it over D-Bus for desktop auto-rotation.
+
+   Outside tablet mode the classification result is replaced with
+   `right-up`. The MiniBook X panel is mounted in portrait, so a
+   compositor consuming orientation events (e.g. via `iio-niri`)
+   applies a 270° rotation in laptop mode and follows the
+   accelerometer once the lid folds past the tablet threshold. This
+   removes the need for a separate static rotation fix (kernel
+   cmdline, VBT patch, xrandr); see
+   [GUIDE.md](../GUIDE.md#display-rotation).
