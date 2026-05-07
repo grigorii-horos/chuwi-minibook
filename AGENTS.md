@@ -80,11 +80,11 @@ editing any bash script in this repository.
 ### File Structure
 
 1. `#!/bin/bash` shebang (always bash, never sh/zsh)
-2. `# SPDX-License-Identifier: 0BSD`
-3. `set -euo pipefail`
-4. Constants (`readonly`, `UPPER_SNAKE_CASE`), declared at the top
-5. All function definitions (no executable code between functions)
-6. `main "$@"` at the bottom (if the script has any functions)
+1. `# SPDX-License-Identifier: 0BSD`
+1. `set -euo pipefail`
+1. Constants (`readonly`, `UPPER_SNAKE_CASE`), declared at the top
+1. All function definitions (no executable code between functions)
+1. `main "$@"` at the bottom (if the script has any functions)
 
 ### Formatting
 

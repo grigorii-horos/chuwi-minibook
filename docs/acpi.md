@@ -59,14 +59,13 @@ undocumented registers.
 
 ## DPTF participants
 
-IETM (manager), TPWR, TPCH and BAT1 are directly under `\_SB`.
-SEN1--SEN5, DGPU, TFN1--TFN3 and CHRG are under
-`\_SB.PC00.LPCB.H_EC`. TCPU is a PCI device at 00:04.0
-(`\_SB.PC00.TCPU`) with DPTF methods added by the DptfTabl SSDT.
+IETM (manager), TPWR, TPCH and BAT1 are directly under `\_SB`. SEN1--SEN5, DGPU,
+TFN1--TFN3 and CHRG are under `\_SB.PC00.LPCB.H_EC`. TCPU is a PCI device at
+00:04.0 (`\_SB.PC00.TCPU`) with DPTF methods added by the DptfTabl SSDT.
 
-Only SEN3 returns valid data; the other EC-based sensors depend on
-fields the BIOS never defined in the EC OperationRegion. HIDs are
-resolved dynamically by the `GHID` method in `\_SB.IETM`.
+Only SEN3 returns valid data; the other EC-based sensors depend on fields the
+BIOS never defined in the EC OperationRegion. HIDs are resolved dynamically by
+the `GHID` method in `\_SB.IETM`.
 
 | Device | HID      | EC field    | Description                                                   |
 | ------ | -------- | ----------- | ------------------------------------------------------------- |
@@ -86,12 +85,11 @@ resolved dynamically by the `GHID` method in `\_SB.IETM`.
 | TPCH   | INTC1049 |             | Intel PCH FIVR                                                |
 | BAT1   | INTC1061 |             | Battery                                                       |
 
-Each participant's `_STA` is gated by a GNVS flag: `DPTF`+`IN34`
-(IETM), `SADE` (TCPU), `S1DE`--`S5DE` (SEN1--SEN5), `S6DE` (DGPU),
-`FND1`--`FND3` (TFN1--TFN3), `CHGE` (CHRG), `PWRE` (TPWR), `PCHE`
-(TPCH), `BATR` (BAT1). The `dptf_enabler` module sets these flags at
-runtime so the kernel instantiates the devices. See the main
-[README](../README.md).
+Each participant's `_STA` is gated by a GNVS flag: `DPTF`+`IN34` (IETM), `SADE`
+(TCPU), `S1DE`--`S5DE` (SEN1--SEN5), `S6DE` (DGPU), `FND1`--`FND3` (TFN1--TFN3),
+`CHGE` (CHRG), `PWRE` (TPWR), `PCHE` (TPCH), `BATR` (BAT1). The `dptf_enabler`
+module sets these flags at runtime so the kernel instantiates the devices. See
+the main [README](../README.md).
 
 ## Thermal zone TZ00
 
@@ -115,8 +113,8 @@ Two MXC6655 accelerometers on separate I2C buses (both at address 0x15):
 | I2C0 | Base half    |
 | I2C1 | Display half |
 
-I2C speed: 400 kHz. The `LTSM` method switches keyboard mode:
-`LTSM(0)` = laptop (KBCD=0x00), `LTSM(1)` = slate (KBCD=0x03).
+I2C speed: 400 kHz. The `LTSM` method switches keyboard mode: `LTSM(0)` = laptop
+(KBCD=0x00), `LTSM(1)` = slate (KBCD=0x03).
 
 ## USB port map
 
@@ -138,8 +136,8 @@ From xh_adl_N (ssdt10). GUPC type 0xFF = any device.
 | SS03 | Yes    | Yes     | 4        | SuperSpeed                                 |
 | SS04 | Yes    | Yes     | 6        | USB-C SS alt mode                          |
 
-HS03, HS07, HS09 are disabled. Type-C TBT/USB4 ports (TXHC SS01/SS02)
-are disabled on this SKU.
+HS03, HS07, HS09 are disabled. Type-C TBT/USB4 ports (TXHC SS01/SS02) are
+disabled on this SKU.
 
 ## Low power idle (LPIT)
 

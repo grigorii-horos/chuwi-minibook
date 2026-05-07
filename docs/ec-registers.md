@@ -1,7 +1,7 @@
 # EC Register Map
 
-ITE IT5570E embedded controller. Host-visible through the 256-byte ACPI
-EC window at `\_SB.PC00.LPCB.H_EC` (ports 0x62/0x66).
+ITE IT5570E embedded controller. Host-visible through the 256-byte ACPI EC
+window at `\_SB.PC00.LPCB.H_EC` (ports 0x62/0x66).
 
 ## ACPI EC window (0x00-0xFF)
 
@@ -41,18 +41,18 @@ EC window at `\_SB.PC00.LPCB.H_EC` (ports 0x62/0x66).
 | `0xF0`        |       | 1    | BIOS unlock. Write `0xAA` to expose hidden BIOS menus on next boot. Volatile (lost on power-off). Exposed by `minibook_ec` as `bios_unlock`. |
 | `0xF3`        |       | 1    | BIOS password clear. Write `0xAA`, reboot; BIOS clears the password hash and writes `0xDD` to acknowledge.                                   |
 
-Battery registers (0x81-0x93) are populated by the EC from SMBus and read
-by standard ACPI `_BIF`/`_BST` methods. Linux exposes them via
+Battery registers (0x81-0x93) are populated by the EC from SMBus and read by
+standard ACPI `_BIF`/`_BST` methods. Linux exposes them via
 `/sys/class/power_supply/BAT0/`.
 
-Offsets not listed are either unused gaps or EC-internal scratch that is
-not meaningful to read from the host.
+Offsets not listed are either unused gaps or EC-internal scratch that is not
+meaningful to read from the host.
 
 ## IT5570E internal registers (I2EC)
 
-These are in the EC's 16-bit address space, accessible from the host via
-the PNPCFG Depth-2 I/O interface at port 0x4E/0x4F. The `minibook_ec`
-module uses I2EC for fan, charger thermal zone and keyboard backlight.
+These are in the EC's 16-bit address space, accessible from the host via the
+PNPCFG Depth-2 I/O interface at port 0x4E/0x4F. The `minibook_ec` module uses
+I2EC for fan, charger thermal zone and keyboard backlight.
 
 ### Chip ID (0x2000)
 
@@ -64,12 +64,12 @@ module uses I2EC for fan, charger thermal zone and keyboard backlight.
 
 ### PWM (0x1800)
 
-| Address  | Register | Description                                            |
-| -------- | -------- | ------------------------------------------------------ | ------ |
-| `0x1803` | DCR1     | Keyboard backlight PWM duty (0-255).                   |
-| `0x1809` | DCR7     | Fan PWM duty (0-255). Firmware clamps to `0xB8` (72%). |
-| `0x181E` | F1TLRR   | Fan tachometer period LSB.                             |
-| `0x181F` | F1TMRR   | Fan tachometer period MSB. RPM = `1875000 / (MSB<<8    | LSB)`. |
+| Address | Register | Description | | -------- | -------- |
+------------------------------------------------------ | ------ | | `0x1803` |
+DCR1 | Keyboard backlight PWM duty (0-255). | | `0x1809` | DCR7 | Fan PWM duty
+(0-255). Firmware clamps to `0xB8` (72%). | | `0x181E` | F1TLRR | Fan tachometer
+period LSB. | | `0x181F` | F1TMRR | Fan tachometer period MSB. RPM =
+`1875000 / (MSB<<8    | LSB)`. |
 
 ### ADC (0x1900)
 
@@ -95,10 +95,10 @@ module uses I2EC for fan, charger thermal zone and keyboard backlight.
 
 ### SMBus (0x1C00)
 
-Channel A communicates with an ANX7447 USB-PD controller at I2C addresses
-`0x37` (PD policy) and `0x2B` (TCPCI). Channel B is unused (no responding
-devices). The ANX7447 is the only peripheral on the EC's SMBus.
+Channel A communicates with an ANX7447 USB-PD controller at I2C addresses `0x37`
+(PD policy) and `0x2B` (TCPCI). Channel B is unused (no responding devices). The
+ANX7447 is the only peripheral on the EC's SMBus.
 
-The EC handles PD negotiation and charger control autonomously. There is
-no software-accessible charge limit or threshold -- the firmware does not
-implement this feature.
+The EC handles PD negotiation and charger control autonomously. There is no
+software-accessible charge limit or threshold -- the firmware does not implement
+this feature.

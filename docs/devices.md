@@ -24,7 +24,7 @@
 | Microcode | 0x1A (CPUID 0xB06E0)           |
 | IGFX GOP  | 21.1.6                         |
 
----
+______________________________________________________________________
 
 ## Active devices
 
@@ -125,13 +125,12 @@
 | ----------- | -------------- | ---------------------------------------------------------------------------- |
 | ITE IT5570E | ACPI `PNP0C09` | See [minibook-ec.md](minibook-ec.md) and [ec-registers.md](ec-registers.md). |
 
----
+______________________________________________________________________
 
 ## Disabled ACPI devices
 
-Defined in the Alder Lake-N reference DSDT but not populated on this
-board (`_STA = 0`). These are alternate component options from the
-reference design.
+Defined in the Alder Lake-N reference DSDT but not populated on this board
+(`_STA = 0`). These are alternate component options from the reference design.
 
 ### Sensors
 
@@ -174,17 +173,16 @@ reference design.
 | Microchip PAC1934 Power Monitor (x4) | `MCHP1930` | I2C5 @ 0x18                        |
 | BAT1, BAT2                           | `PNP0C0A`  | Extra battery slots, not populated |
 
----
+______________________________________________________________________
 
 ## How this was gathered
 
-Active devices were enumerated from `/sys` (PCI, USB, I2C, ACPI, DRM,
-hwmon, power_supply) using `tools/detect-hardware.sh`. Battery, NVMe,
-Wi-Fi, camera and ME details were read from sysfs and standard tools
-(`iw`, `lsusb`, `bluetoothctl`). Disabled devices, I2C bus assignments,
-GPIO pins and DPTF participants were identified from decompiled ACPI
-tables (DSDT + SSDTs). EC registers and the ANX7447 were mapped through
-firmware decompilation and I2EC probing.
+Active devices were enumerated from `/sys` (PCI, USB, I2C, ACPI, DRM, hwmon,
+power_supply) using `tools/detect-hardware.sh`. Battery, NVMe, Wi-Fi, camera and
+ME details were read from sysfs and standard tools (`iw`, `lsusb`,
+`bluetoothctl`). Disabled devices, I2C bus assignments, GPIO pins and DPTF
+participants were identified from decompiled ACPI tables (DSDT + SSDTs). EC
+registers and the ANX7447 were mapped through firmware decompilation and I2EC
+probing.
 
-See [acpi.md](acpi.md) for the
-full ACPI analysis.
+See [acpi.md](acpi.md) for the full ACPI analysis.
