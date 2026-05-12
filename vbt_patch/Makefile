@@ -1,7 +1,7 @@
 CC = clang
 CFLAGS = -Wall -Wextra -O2
 
-KVER ?= $(shell uname -r | cut -d- -f1)
+KVER ?= $(shell uname -r | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
 KERNEL_GIT = https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain
 I915_DISPLAY = drivers/gpu/drm/i915/display
 HEADERS = intel_vbt_defs.h intel_dsi_vbt_defs.h
