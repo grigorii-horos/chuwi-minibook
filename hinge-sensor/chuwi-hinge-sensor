@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0+
+# Hinge angle daemon for CHUWI MiniBook X.
+# Reads dual MXC6655 accelerometers via IIO sysfs, emits SW_TABLET_MODE via
+# uinput. Must start before the display manager so KWin sees the device.
+
+import sys
+import os
+import math
+import time
+import signal
+import evdev
+from evdev import UInput, ecodes
+
+IIO_BASE    = '/sys/bus/iio/devices'
+ACPI_CALL   = '/proc/acpi/call'
+LTSM_CMD    = r'\_SB.ACMK.LTSM'
+LTSM_SYSFS  = '/sys/bus/acpi/devices/MDA6655:00/chuwi_ltsm_hack'
+UINPUT_NAME = 'Chuwi MiniBook Tablet Mode Switch'
+
+# Default calibration from DSDT GMTR (row-major 3x3).
+# accel1 = screen (iio:device1), accel2 = keyboard (iio:device0).
+CAL1 = [1, 0, 0,  0,  1, 0,  0, 0,  1]
+CAL2 = [1, 0, 0,  0, -1, 0,  0, 0, -1]
+
+TABLET_THRESH = 185.0
+LAPTOP_THRESH = 175.0
+MIN_ANGLE     = 30.0
+DEBOUNCE      = 5
+POLL_INTERVAL = 0.1
+
+
+I2C_NEW_DEVICE = '/sys/bus/i2c/devices/i2c-0/new_device'
+I2C_CHIP       = 'mxc4005 0x15'
+
+
+def ensure_second_accel():
+    # The second MXC6655 chip (keyboard side, I2C-0 addr 0x15) has no ACPI
+    # entry and must be registered manually. Safe to call even if already done.
+    try:
+        with open(I2C_NEW_DEVICE, 'w') as f:
+            f.write(I2C_CHIP + '\n')
+    except OSError:
+        pass
+    time.sleep(0.3)
+
+
+def find_iio_devices():
+    result = []
+    for name in sorted(os.listdir(IIO_BASE)):
+        path = os.path.join(IIO_BASE, name)
+        try:
+            dev_name = open(os.path.join(path, 'name')).read().strip()
+        except OSError:
+            continue
+        if dev_name in ('mxc4005', 'mxc6655'):
+            result.append(path)
+    return result
+
+
+def read_iio(path):
+    x = int(open(os.path.join(path, 'in_accel_x_raw')).read())
+    y = int(open(os.path.join(path, 'in_accel_y_raw')).read())
+    z = int(open(os.path.join(path, 'in_accel_z_raw')).read())
+    scale = float(open(os.path.join(path, 'in_accel_scale')).read())
+    return x * scale / 9.81, y * scale / 9.81, z * scale / 9.81
+
+
+def calibrate(v, m):
+    x, y, z = v
+    return (
+        m[0]*x + m[1]*y + m[2]*z,
+        m[3]*x + m[4]*y + m[5]*z,
+        m[6]*x + m[7]*y + m[8]*z,
+    )
+
+
+def compute_hinge_angle(c1, c2):
+    # Negate Y and Z for accel1 — DSDT GMTR calibration convention.
+    # Uses 180/3.14 (not pi) to match DSDT PARB threshold values.
+    a1x, a1y, a1z = c1[0], -c1[1], -c1[2]
+    a2x, a2y, a2z = c2[0],  c2[1],  c2[2]
+
+    mag1 = math.sqrt(a1x**2 + a1y**2 + a1z**2)
+    mag2 = math.sqrt(a2x**2 + a2y**2 + a2z**2)
+    if mag1 > 1e-5:
+        a1x, a1y, a1z = a1x/mag1, a1y/mag1, a1z/mag1
+    if mag2 > 1e-5:
+        a2x, a2y, a2z = a2x/mag2, a2y/mag2, a2z/mag2
+
+    ang1 = math.atan2(a1x, a1z) * (180.0 / 3.14)
+    ang2 = math.atan2(a2x, a2z) * (180.0 / 3.14)
+
+    if ang1 < 0.0:
+        ang1 += 360.0
+    if ang2 < 0.0:
+        ang2 += 360.0
+
+    diff = ang1 - ang2
+    if ang1 < ang2:
+        diff += 360.0
+    return diff
+
+
+def call_ltsm(mode):
+    cmd = f'{LTSM_CMD} {mode}\0'.encode()
+    try:
+        with open(ACPI_CALL, 'wb') as f:
+            f.write(cmd)
+        return True
+    except OSError:
+        return False
+
+
+def write_ltsm(mode):
+    if call_ltsm(mode):
+        return
+    # Fallback to sysfs attribute from chuwi_ltsm_hack module.
+    try:
+        with open(LTSM_SYSFS, 'w') as f:
+            f.write(str(mode) + '\n')
+    except OSError:
+        pass
+
+
+def main():
+    ensure_second_accel()
+    devices = find_iio_devices()
+    if len(devices) < 2:
+        print(f'chuwi-hinge-sensor: need 2 accelerometers, found {len(devices)}',
+              file=sys.stderr)
+        sys.exit(1)
+
+    # Sorted order: iio:device0 = keyboard side, iio:device1 = screen side.
+    accel_kbd    = devices[0]
+    accel_screen = devices[1]
+
+    cap = {ecodes.EV_SW: [ecodes.SW_TABLET_MODE]}
+    ui = UInput(cap, name=UINPUT_NAME,
+                bustype=0x06, vendor=0x4358, product=0x0001, version=0x0001)
+
+    # Give udev time to tag the new input device before sddm/KWin start.
+    time.sleep(0.5)
+
+    mode    = -1
+    t_count = 0
+    l_count = 0
+
+    def on_sigterm(sig, frame):
+        ui.close()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, on_sigterm)
+
+    while True:
+        try:
+            raw1 = read_iio(accel_screen)
+            raw2 = read_iio(accel_kbd)
+        except OSError as e:
+            print(f'chuwi-hinge-sensor: read error: {e}', file=sys.stderr)
+            time.sleep(1.0)
+            continue
+
+        c1    = calibrate(raw1, CAL1)
+        c2    = calibrate(raw2, CAL2)
+        angle = compute_hinge_angle(c1, c2)
+
+        if angle > TABLET_THRESH:
+            t_count += 1
+            l_count  = 0
+            if mode != 1 and t_count > DEBOUNCE:
+                mode = 1
+                ui.write(ecodes.EV_SW, ecodes.SW_TABLET_MODE, 1)
+                ui.syn()
+                write_ltsm(1)
+        elif MIN_ANGLE < angle < LAPTOP_THRESH:
+            l_count += 1
+            t_count  = 0
+            if mode != 0 and l_count > DEBOUNCE:
+                mode = 0
+                ui.write(ecodes.EV_SW, ecodes.SW_TABLET_MODE, 0)
+                ui.syn()
+                write_ltsm(0)
+        else:
+            t_count = 0
+            l_count = 0
+
+        time.sleep(POLL_INTERVAL)
+
+
+if __name__ == '__main__':
+    main()

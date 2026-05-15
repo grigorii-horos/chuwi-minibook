@@ -1,0 +1,22 @@
+# Maintainer: Grigorii Horos <horosgrisa@gmail.com>
+
+pkgname=chuwi-hinge-sensor
+pkgver=1.0
+pkgrel=1
+pkgdesc='Hinge angle tablet mode daemon for Chuwi MiniBook X'
+arch=('any')
+url='https://github.com/fstanis/chuwi-minibook'
+license=('GPL-2.0-only')
+depends=('python' 'python-evdev' 'acpi_call-dkms')
+optdepends=('chuwi-ltsm-hack-dkms: fallback keyboard disable via sysfs')
+
+_source_root="${startdir}/../.."
+
+package() {
+  install -Dm755 "${_source_root}/chuwi-hinge-sensor" \
+    "${pkgdir}/usr/bin/chuwi-hinge-sensor"
+
+  install -Dm644 "${_source_root}/chuwi-hinge-sensor.service" \
+    "${pkgdir}/usr/lib/systemd/system/chuwi-hinge-sensor.service"
+
+}
