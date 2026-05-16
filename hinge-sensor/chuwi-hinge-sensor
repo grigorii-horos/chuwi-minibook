@@ -15,7 +15,6 @@ from evdev import UInput, ecodes
 IIO_BASE    = '/sys/bus/iio/devices'
 ACPI_CALL   = '/proc/acpi/call'
 LTSM_CMD    = r'\_SB.ACMK.LTSM'
-LTSM_SYSFS  = '/sys/bus/acpi/devices/MDA6655:00/chuwi_ltsm_hack'
 UINPUT_NAME = 'Chuwi MiniBook Tablet Mode Switch'
 
 # Default calibration from DSDT GMTR (row-major 3x3).
@@ -102,23 +101,11 @@ def compute_hinge_angle(c1, c2):
     return diff
 
 
-def call_ltsm(mode):
+def write_ltsm(mode):
     cmd = f'{LTSM_CMD} {mode}\0'.encode()
     try:
         with open(ACPI_CALL, 'wb') as f:
             f.write(cmd)
-        return True
-    except OSError:
-        return False
-
-
-def write_ltsm(mode):
-    if call_ltsm(mode):
-        return
-    # Fallback to sysfs attribute from chuwi_ltsm_hack module.
-    try:
-        with open(LTSM_SYSFS, 'w') as f:
-            f.write(str(mode) + '\n')
     except OSError:
         pass
 
