@@ -38,7 +38,7 @@
 #define GMTR_TABLET_THRESH	185.0f
 #define GMTR_LAPTOP_THRESH	175.0f
 #define GMTR_MIN_ANGLE		30.0f
-#define GMTR_DEBOUNCE		12
+#define GMTR_DEBOUNCE		5
 #define GMTR_POLL_MS		50
 
 #define GRAVITY_MIN		0.3f
@@ -919,32 +919,19 @@ update_orientation (OrientState *s, const Vec3 *accel)
 }
 
 static gint
-classify_orientation (const Vec3 *accel, gint cur_orient)
+classify_orientation (const Vec3 *accel)
 {
 	float abs_x = fabsf (accel->x);
 	float abs_y = fabsf (accel->y);
-	gboolean cur_landscape;
 
 	/* Need at least 0.4g of tilt to determine orientation */
 	if (abs_x < 0.4f && abs_y < 0.4f)
 		return -1;
 
-	/* 20% hysteresis: require dominant axis to clearly win before switching.
-	 * Without this the portrait/landscape boundary at abs_x==abs_y causes
-	 * constant flipping with small sideways tilts. */
-	cur_landscape = (cur_orient == MXC_ORIENT_RIGHT || cur_orient == MXC_ORIENT_LEFT);
-
-	if (cur_landscape) {
-		if (abs_x >= abs_y * 0.8f)
-			return accel->x > 0.0f ? MXC_ORIENT_RIGHT : MXC_ORIENT_LEFT;
-		else
-			return accel->y < 0.0f ? MXC_ORIENT_NORMAL : MXC_ORIENT_INVERTED;
-	} else {
-		if (abs_y >= abs_x * 0.8f)
-			return accel->y < 0.0f ? MXC_ORIENT_NORMAL : MXC_ORIENT_INVERTED;
-		else
-			return accel->x > 0.0f ? MXC_ORIENT_RIGHT : MXC_ORIENT_LEFT;
-	}
+	if (abs_y >= abs_x)
+		return accel->y < 0.0f ? MXC_ORIENT_NORMAL : MXC_ORIENT_INVERTED;
+	else
+		return accel->x > 0.0f ? MXC_ORIENT_RIGHT : MXC_ORIENT_LEFT;
 }
 
 static float
@@ -1057,7 +1044,7 @@ update_orientation_debounce (SensorDevice *sensor_device, DrvData *drv_data,
 	if (ost <= 0)
 		return;
 
-	new_orient = classify_orientation (accel, drv_data->cur_orient);
+	new_orient = classify_orientation (accel);
 	if (new_orient < 0)
 		return;
 
@@ -1101,7 +1088,7 @@ set_tablet_mode (DrvData *drv_data, gint mode, float angle)
 static void
 update_tablet_mode (DrvData *drv_data, float angle)
 {
-	if (angle > drv_data->tablet_thresh && angle < 360.0f - drv_data->min_angle) {
+	if (angle > drv_data->tablet_thresh) {
 		drv_data->t_count++;
 		drv_data->l_count = 0;
 		drv_data->n_count = 0;
