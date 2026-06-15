@@ -1101,7 +1101,7 @@ set_tablet_mode (DrvData *drv_data, gint mode, float angle)
 static void
 update_tablet_mode (DrvData *drv_data, float angle)
 {
-	if (angle > drv_data->tablet_thresh) {
+	if (angle > drv_data->tablet_thresh && angle < 360.0f - drv_data->min_angle) {
 		drv_data->t_count++;
 		drv_data->l_count = 0;
 		drv_data->n_count = 0;
