@@ -1,7 +1,7 @@
 # Maintainer: Grigorii Horos <horosgrisa@gmail.com>
 
 pkgname=goodix_ts-dkms
-pkgver=7.0.12.minibook1  # updated by pkgver()
+pkgver=7.2.0.minibook1  # updated by pkgver()
 pkgrel=1
 pkgdesc='Goodix touchscreen driver for Chuwi MiniBook X with resume fix (DKMS)'
 arch=('any')
@@ -29,12 +29,12 @@ prepare() {
      "${_source_root}/goodix_cfg.bin" \
      "${srcdir}/build/"
   cd "${srcdir}/build"
-  local kver
-  kver="$(uname -r | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')"
+  local kver_mm
+  kver_mm="$(uname -r | grep -oE '^[0-9]+\.[0-9]+')"
   local base='https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain'
   local dir='drivers/input/touchscreen'
   for f in goodix.c goodix.h goodix_fwupload.c; do
-    curl -fsSL -o "${f}" "${base}/${dir}/${f}?h=v${kver}"
+    curl -fsSL -o "${f}" "${base}/${dir}/${f}?h=linux-${kver_mm}.y"
   done
   patch -p1 < goodix_resume.patch
 }
