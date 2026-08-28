@@ -1,7 +1,7 @@
 # Maintainer: Grigorii Horos <horosgrisa@gmail.com>
 
 pkgname=goodix_ts-dkms
-pkgver=7.0.7.minibook1  # updated by pkgver()
+pkgver=7.0.12.minibook1  # updated by pkgver()
 pkgrel=1
 pkgdesc='Goodix touchscreen driver for Chuwi MiniBook X with resume fix (DKMS)'
 arch=('any')
